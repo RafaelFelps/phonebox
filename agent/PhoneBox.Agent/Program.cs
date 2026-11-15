@@ -72,6 +72,8 @@ AddMonitor<PrivacyMonitor>(builder.Services);
 AddMonitor<CalendarMonitor>(builder.Services);
 AddMonitor<DockerMonitor>(builder.Services);
 AddMonitor<ObsMonitor>(builder.Services);
+AddMonitor<DiscordMonitor>(builder.Services);
+builder.Services.AddSingleton<ChessMonitor>();
 AddMonitor<BatteryMonitor>(builder.Services);
 AddMonitor<RuleEngine>(builder.Services);
 AddMonitor<ChargeGuard>(builder.Services);
@@ -472,6 +474,39 @@ app.MapPost("/api/obs/{action}", async (string action, string? scene, ObsMonitor
     await obs.ActAsync(action, scene) is { } error ? Results.BadRequest(new { error }) : Results.Ok(new { ok = true }));
 // Settings › General › OBS › Test (local only: deliberately not under /api/obs, which the phone may reach over Wi-Fi)
 app.MapPost("/api/obs-test", async (ObsConfig body) => Results.Json(new { result = await ObsMonitor.TestAsync(body.Url, body.Password) }));
+
+// Discord (widget): the voice channel you are in, who is talking; mute / deafen / leave from the phone.
+app.MapGet("/api/discord", (DiscordMonitor discord, ConfigStore cfg) => Results.Json(new
+{
+    snapshot = discord.Snapshot(),
+    control = cfg.Get().Widgets().Any(w => w.Type == "discord" && w.Bool("control") != false),
+}));
+app.MapPost("/api/discord/{action}", async (string action, DiscordMonitor discord, ConfigStore cfg, CancellationToken ct) =>
+{
+    if (!cfg.Get().Widgets().Any(w => w.Type == "discord" && w.Bool("control") != false))
+        return Results.BadRequest(new { error = "Discord buttons are turned off in the widget's settings" });
+    return await discord.Act(action, ct) is { } error ? Results.BadRequest(new { error }) : Results.Ok(new { ok = true });
+});
+app.MapGet("/api/discord-avatar", async (string? u, string? h, DiscordMonitor discord, HttpContext ctx, CancellationToken ct) =>
+{
+    if (u is null || h is null || await discord.Avatar(u, h, ct) is not { } bytes) return Results.NotFound();
+    ctx.Response.Headers.CacheControl = "private, max-age=21600";
+    return Results.Bytes(bytes, "image/png");
+});
+// Settings › General › Discord (local only: deliberately not under /api/discord, which the phone may reach over Wi-Fi)
+app.MapPost("/api/discord-connect", (DiscordMonitor discord) => { discord.RequestAuthorize(); return Results.Ok(); });
+app.MapPost("/api/discord-disconnect", (DiscordMonitor discord) => { discord.Disconnect(); return Results.Ok(); });
+app.MapGet("/api/discord-status", (DiscordMonitor discord) => Results.Json(discord.Snapshot()));
+
+// Chess (widget): recent chess.com / Lichess games and a move-by-move review of a finished one.
+app.MapGet("/api/chess/games", async (string? site, string? user, ChessMonitor chess, CancellationToken ct) =>
+    !ChessMonitor.ValidSite(site) || !ChessMonitor.ValidUser(user)
+        ? Results.BadRequest(new { error = "Set a chess.com or Lichess username in the widget's settings" })
+        : Results.Json(await chess.Games(site!, user!, ct)));
+app.MapGet("/api/chess/game/{id}", (string id, ChessMonitor chess) =>
+    chess.Review(id) is { } review ? Results.Json(review) : Results.NotFound(new { error = "Unknown game: reload the list" }));
+// Settings › General › Chess (local only)
+app.MapGet("/api/chess-engine", (ChessMonitor chess) => Results.Json(new { path = chess.Engine() }));
 
 // Battery levels of wireless devices (headphones, mice, keyboards…), for the Device batteries widget.
 app.MapGet("/api/batteries", (BatteryMonitor b) => Results.Json(new { devices = b.Snapshot() }));

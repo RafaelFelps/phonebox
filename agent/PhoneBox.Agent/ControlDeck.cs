@@ -268,6 +268,9 @@ public sealed partial class ControlDeck : BackgroundService
         switch (action.Kind)
         {
             case "task": case "server": return _tasks.Start(action, op == "stop");
+            // a Discord / meeting button is usually one hotkey: its target may be the keys ("RightShift+F12") instead of a shortcut ID
+            case "meeting" or "discord" when !c.Shortcuts.Any(s => s.Id == action.Target) && IsKeys(action.Target):
+                KeySender.SendKeys(action.Target); return new(true);
             case "shortcut": case "macro": case "snippet": case "meeting": case "discord": case "project": case "app": case "focus":
                 return await ShortcutAction(c, action.Target, op, ct);
             case "keys": KeySender.SendKeys(action.Target); return new(true);
@@ -325,6 +328,12 @@ public sealed partial class ControlDeck : BackgroundService
     }
     private static DeckItem DescribeShortcut(Shortcut s) => new(s.Id, s.Label, s.Cmd switch
     { "builtin:keys" => "keys", "builtin:text" => "text", "builtin:macro" => "macro", _ when s.Cmd.StartsWith("builtin:", StringComparison.Ordinal) => "shortcut", _ => "app" }, ShortcutRunning(s) ? "Running" : null);
+    private static bool IsKeys(string target)
+    {
+        try { KeySender.Parse(target); return true; }
+        catch (ArgumentException) { return false; }
+    }
+
     private async Task<DeckResult> ShortcutAction(AgentConfig config, string id, string op, CancellationToken ct)
     {
         var shortcut = config.Shortcuts.FirstOrDefault(s => s.Id == id);

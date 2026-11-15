@@ -1057,3 +1057,107 @@ body.waking::after { opacity: 0; pointer-events: auto; transition: opacity .2s e
 .gd-chips { margin: 8px 0 0; justify-content: flex-start; max-height: 48px; }
 @container (max-height: 190px) { .w-gpu .gd-chips { display: none; } }
 @container (max-height: 120px) { .w-gpu .gd-rows .meter:nth-child(n+2) { display: none; } }
+
+/* ---------------------------------------------------------------- Discord */
+.w-discord { padding: 9px 12px; display: flex; flex-direction: column; gap: 6px; }
+.w-discord .w-title { color: #8b93ff; }
+.dc-head { align-items: baseline; }
+.dc-chan { overflow: hidden; text-overflow: ellipsis; }
+.dc-guild { color: var(--muted); font-weight: 600; letter-spacing: .06em; overflow: hidden; text-overflow: ellipsis; }
+.dc-list { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 3px; scrollbar-width: none; }
+.dc-list.grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-content: start; }
+.dc-list > * { flex-shrink: 0; }
+.dc-row { display: grid; grid-template-columns: 30px minmax(0, 1fr) auto; align-items: center; gap: 9px; padding: 3px 4px; border-radius: 9px; font-size: 14px; }
+.dc-row.quiet .dc-name { color: var(--muted); }
+.dc-av { position: relative; width: 30px; height: 30px; border-radius: 50%; background: #4f46e5; overflow: hidden; box-shadow: 0 0 0 2px transparent; transition: box-shadow .12s; }
+.dc-av::before { content: attr(data-i); position: absolute; inset: 0; display: grid; place-items: center; font-weight: 700; font-size: 14px; color: #fff; }
+.dc-av img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.dc-row.talk .dc-av { box-shadow: 0 0 0 2px #23a55a, 0 0 10px rgba(35, 165, 90, .55); }
+.dc-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dc-bot { margin-left: 6px; font-size: 9.5px; font-weight: 700; background: #5865f2; color: #fff; border-radius: 4px; padding: 1px 4px; vertical-align: 2px; }
+.dc-flags { display: flex; gap: 4px; color: #f23f43; }
+.dc-flag svg { width: 15px; height: 15px; display: block; }
+.dc-bar { display: flex; gap: 8px; }
+.dc-btn { flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px; border: 1px solid rgba(255, 255, 255, .14); background: rgba(255, 255, 255, .06); color: var(--text); border-radius: 10px; padding: 8px 0; font: inherit; font-size: 13px; font-weight: 600; }
+.dc-btn .dc-ico svg { width: 17px; height: 17px; display: block; }
+.dc-btn.on { background: rgba(242, 63, 67, .18); border-color: rgba(242, 63, 67, .5); color: #fca5a5; }
+.dc-btn.danger { color: #fca5a5; border-color: rgba(239, 68, 68, .4); }
+.dc-btn.busy { opacity: .5; }
+.w-discord.small .dc-lbl { display: none; }
+.w-discord.small .dc-btn { padding: 5px 0; }
+
+/* ---------------------------------------------------------------- Chess */
+.w-chess { padding: 8px; display: flex; gap: 10px; }
+.w-chess.narrow { flex-direction: column; align-items: center; gap: 6px; }
+.cz-bw { display: flex; gap: 4px; height: 100%; aspect-ratio: 1.07; max-width: 64%; flex-shrink: 0; }
+.w-chess.narrow .cz-bw { height: auto; width: 100%; max-width: none; flex: 1 1 0; min-height: 0; aspect-ratio: auto; justify-content: center; }
+.w-chess.narrow .cz-board { flex: 0 1 auto; height: 100%; }
+.w-chess.narrow .cz-side { flex: 0 0 auto; }
+.w-chess.narrow .cz-pl { display: none; }
+.w-chess.narrow .cz-better { display: inline; margin-left: 10px; }
+.cz-eval { position: relative; width: 6%; min-width: 8px; border-radius: 4px; overflow: hidden; background: #2b2b2b; display: flex; flex-direction: column-reverse; }
+.cz-eval.flip { flex-direction: column; }
+.cz-evw { background: #eef2f6; transition: height .35s ease; }
+.cz-evt { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%) rotate(-90deg); font-size: 9px; font-weight: 700; color: #f59e0b; white-space: nowrap; }
+.cz-board { position: relative; flex: 1; aspect-ratio: 1; display: grid; grid-template: repeat(8, 1fr) / repeat(8, 1fr); border-radius: 6px; overflow: hidden; container-type: size; }
+.cz-sq.l { background: #e9edcc; }
+.cz-sq.d { background: #779954; }
+.cz-sq.l.last { background: #f5f682; }
+.cz-sq.d.last { background: #b9ca43; }
+.cz-pc { display: grid; place-items: center; font-size: 10.6cqw; line-height: 1; font-family: "DejaVu Sans", "Noto Sans Symbols 2", "Segoe UI Symbol", sans-serif; pointer-events: none; z-index: 1; }
+.cz-pc.w { color: #fff; text-shadow: 0 0 1px #000, 0 0 1px #000, 0 1px 1px #000; -webkit-text-stroke: .4px #222; }
+.cz-pc.b { color: #1d1d1d; text-shadow: 0 0 1px rgba(255, 255, 255, .5); }
+.cz-arrow { position: absolute; inset: 0; width: 100%; height: 100%; color: rgba(34, 197, 94, .85); pointer-events: none; z-index: 2; }
+.cz-side { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px; overflow: hidden; }
+.w-chess.narrow .cz-side { width: 100%; }
+.w-chess .w-title { color: #c4a35a; }
+.cz-head { display: flex; gap: 8px; align-items: center; }
+.cz-head .cz-btn { margin-left: auto; flex: 0 0 auto; padding: 2px 10px; }
+.cz-out { font-weight: 800; letter-spacing: .02em; }
+.cz-out.win { color: #4ade80; }
+.cz-out.loss { color: #f87171; }
+.cz-out.draw { color: var(--muted); }
+.cz-src { margin-left: auto; color: var(--dim); font-weight: 600; letter-spacing: .02em; text-transform: none; overflow: hidden; text-overflow: ellipsis; }
+.cz-pl { display: flex; align-items: center; gap: 6px; font-size: 13.5px; white-space: nowrap; overflow: hidden; }
+.cz-pl small { color: var(--muted); }
+.cz-pl.me .cz-pn { font-weight: 700; }
+.cz-pn { overflow: hidden; text-overflow: ellipsis; }
+.cz-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; border: 1px solid #888; }
+.cz-dot.w { background: #fff; }
+.cz-dot.b { background: #111; }
+.cz-acc { margin-left: auto; font-variant-numeric: tabular-nums; font-weight: 700; color: #93c5fd; }
+.cz-mv { padding: 6px 8px; border-radius: 9px; background: rgba(255, 255, 255, .05); font-size: 15px; border-left: 3px solid transparent; }
+.cz-mv .cz-tag { margin-left: 8px; font-size: 12px; font-weight: 700; }
+.cz-better { font-size: 12.5px; color: var(--muted); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cz-mv.best { border-color: #22c55e; }
+.cz-mv.best .cz-tag { color: #4ade80; }
+.cz-mv.good { border-color: #64748b; }
+.cz-mv.good .cz-tag { color: var(--muted); }
+.cz-mv.inaccuracy { border-color: #facc15; }
+.cz-mv.inaccuracy .cz-tag { color: #fde047; }
+.cz-mv.mistake { border-color: #f97316; }
+.cz-mv.mistake .cz-tag { color: #fb923c; }
+.cz-mv.blunder { border-color: #ef4444; }
+.cz-mv.blunder .cz-tag { color: #f87171; }
+.cz-sum { display: flex; gap: 12px; font-size: 12.5px; font-weight: 700; }
+.cz-sum .blunder { color: #f87171; }
+.cz-sum .mistake { color: #fb923c; }
+.cz-sum .inaccuracy { color: #fde047; }
+.cz-prog { color: #93c5fd; }
+.cz-err { color: #fca5a5; font-weight: 600; }
+.cz-ctl { margin-top: auto; display: flex; gap: 5px; }
+.cz-btn { flex: 1; border: 1px solid rgba(255, 255, 255, .14); background: rgba(255, 255, 255, .06); color: var(--text); border-radius: 9px; padding: 7px 0; font: inherit; font-size: 14px; font-weight: 700; }
+.cz-btn.warn { color: #fb923c; }
+.cz-btn:active { background: rgba(255, 255, 255, .14); }
+.w-chess.list { flex-direction: column; gap: 6px; }
+.cz-games { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 3px; scrollbar-width: none; }
+.cz-games > * { flex-shrink: 0; }
+.cz-rt { color: var(--muted); font-weight: 600; letter-spacing: .02em; text-transform: none; overflow: hidden; text-overflow: ellipsis; }
+.cz-g { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; align-items: center; gap: 8px; padding: 6px; border-radius: 8px; font-size: 14px; }
+.cz-g.sel { background: rgba(255, 255, 255, .08); }
+.cz-res { font-weight: 800; text-align: center; border-radius: 5px; font-size: 12px; padding: 2px 0; }
+.cz-g.win .cz-res { background: rgba(34, 197, 94, .2); color: #4ade80; }
+.cz-g.loss .cz-res { background: rgba(239, 68, 68, .2); color: #f87171; }
+.cz-g.draw .cz-res { background: rgba(148, 163, 184, .2); color: var(--muted); }
+.cz-gn { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cz-gn small, .cz-gs { color: var(--muted); font-size: 12px; white-space: nowrap; }

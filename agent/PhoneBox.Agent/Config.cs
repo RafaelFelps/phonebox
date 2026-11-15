@@ -30,6 +30,10 @@ public sealed class AgentConfig
     public HomeAssistantConfig HomeAssistant { get; set; } = new();
     /// <summary>OBS Studio's WebSocket server (obs-websocket 5).</summary>
     public ObsConfig Obs { get; set; } = new();
+    /// <summary>Discord desktop app over its local RPC socket (Discord widget); the client secret never goes to the phone.</summary>
+    public DiscordConfig Discord { get; set; } = new();
+    /// <summary>Chess widget: where Stockfish is and how deep it looks.</summary>
+    public ChessConfig Chess { get; set; } = new();
 
     /// <summary>The pages a phone shows: its own selection (Settings › Phones), or all of them.</summary>
     public IEnumerable<PageConfig> PagesFor(string? deviceId)
@@ -288,6 +292,23 @@ public sealed class ObsConfig
     public string? Password { get; set; }
 }
 
+public sealed class DiscordConfig
+{
+    public bool Enabled { get; set; }
+    /// <summary>The application from discord.com/developers (OAuth2 › Client ID / Client Secret).</summary>
+    public string? ClientId { get; set; }
+    public string? ClientSecret { get; set; }
+    /// <summary>A redirect URI registered on that application (only used for the token exchange).</summary>
+    public string? RedirectUri { get; set; } = "http://localhost";
+}
+
+public sealed class ChessConfig
+{
+    /// <summary>stockfish(.exe); empty = PATH, then winget's Stockfish package.</summary>
+    public string? StockfishPath { get; set; }
+    public int Depth { get; set; } = 14;
+}
+
 public sealed class HomeAssistantConfig
 {
     public string? Url { get; set; }
@@ -488,6 +509,13 @@ public sealed partial class ConfigStore(string path)
         foreach (var ph in c.Phones) { ph.Name = ph.Name?.Trim() ?? ""; if (ph.Pages is { Count: 0 }) ph.Pages = null; }
         c.Obs ??= new();
         if (string.IsNullOrWhiteSpace(c.Obs.Url)) c.Obs.Url = "ws://127.0.0.1:4455";
+        c.Discord ??= new();
+        c.Discord.ClientId = string.IsNullOrWhiteSpace(c.Discord.ClientId) ? null : c.Discord.ClientId.Trim();
+        c.Discord.ClientSecret = string.IsNullOrWhiteSpace(c.Discord.ClientSecret) ? null : c.Discord.ClientSecret.Trim();
+        c.Discord.RedirectUri = string.IsNullOrWhiteSpace(c.Discord.RedirectUri) ? "http://localhost" : c.Discord.RedirectUri.Trim();
+        c.Chess ??= new();
+        c.Chess.StockfishPath = string.IsNullOrWhiteSpace(c.Chess.StockfishPath) ? null : c.Chess.StockfishPath.Trim().Trim('"');
+        c.Chess.Depth = Math.Clamp(c.Chess.Depth == 0 ? 14 : c.Chess.Depth, 8, 24);
         c.HomeAssistant ??= new();
         c.HomeAssistant.Url = string.IsNullOrWhiteSpace(c.HomeAssistant.Url) ? null : c.HomeAssistant.Url.Trim().TrimEnd('/');
         c.HomeAssistant.Token = string.IsNullOrWhiteSpace(c.HomeAssistant.Token) ? null : c.HomeAssistant.Token.Trim();

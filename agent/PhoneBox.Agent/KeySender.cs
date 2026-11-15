@@ -11,7 +11,11 @@ namespace PhoneBox.Agent;
 /// </summary>
 public static class KeySender
 {
-    private static readonly string[] Modifiers = ["ctrl", "shift", "alt", "win"];
+    // "lshift" / "rshift" (and ctrl / alt) press that side's key, for apps whose shortcuts tell them apart (Discord)
+    private static readonly string[] Modifiers = ["ctrl", "shift", "alt", "win", "lctrl", "rctrl", "lshift", "rshift", "lalt", "ralt"];
+
+    /// <summary>"rshift" → "shift": the plain modifier, for the senders that cannot choose a side.</summary>
+    private static string Unsided(string k) => k.Length > 1 && k[0] is 'l' or 'r' && Modifiers.Contains(k) ? k[1..] : k;
 
     /// <summary>Splits "Ctrl+Shift+M, Win+D" into combos of normalized key names; throws on unknown keys.</summary>
     public static List<List<string>> Parse(string spec)
@@ -29,9 +33,15 @@ public static class KeySender
         return combos;
     }
 
-    private static string Normalize(string k) => k.ToLowerInvariant() switch
+    private static string Normalize(string k) => k.ToLowerInvariant().Replace(" ", "").Replace("_", "") switch
     {
         "control" or "ctl" => "ctrl",
+        "rightshift" or "shiftright" or "shiftr" => "rshift",
+        "leftshift" or "shiftleft" or "shiftl" => "lshift",
+        "rightctrl" or "rightcontrol" or "ctrlright" or "controlr" or "ctrlr" => "rctrl",
+        "leftctrl" or "leftcontrol" or "ctrlleft" or "controll" or "ctrll" => "lctrl",
+        "rightalt" or "altright" or "altr" or "altgr" => "ralt",
+        "leftalt" or "altleft" or "altl" => "lalt",
         "cmd" or "command" or "super" or "meta" or "windows" or "⌘" => "win",
         "option" or "opt" or "⌥" => "alt",
         "return" => "enter",
@@ -81,6 +91,7 @@ public static class KeySender
         var vks = combo.Select(k => k switch
         {
             "ctrl" => (byte)0x11, "shift" => (byte)0x10, "alt" => (byte)0x12, "win" => (byte)0x5B,
+            "lshift" => (byte)0xA0, "rshift" => (byte)0xA1, "lctrl" => (byte)0xA2, "rctrl" => (byte)0xA3, "lalt" => (byte)0xA4, "ralt" => (byte)0xA5,
             _ when Special.TryGetValue(k, out var s) => s.Vk,
             _ when k[0] == 'f' && k.Length > 1 => (byte)(0x70 + int.Parse(k[1..]) - 1),
             _ => (byte)char.ToUpperInvariant(k[0]),
@@ -104,13 +115,17 @@ public static class KeySender
     }
 
     // arrows, Home/End, Insert/Delete, PageUp/PageDown and the right-hand keys need the "extended" flag
-    private static bool Extended(byte vk) => vk is >= 0x21 and <= 0x2E or 0x5B;
+    private static bool Extended(byte vk) => vk is >= 0x21 and <= 0x2E or 0x5B or 0xA3 or 0xA5;
 
+    // the hardware scan code as well as the virtual key: shortcut listeners that read scan codes (Discord's
+    // keybinds) then see the same key a real press gives, including which Shift / Ctrl / Alt it was
     private static INPUT Key(byte vk, bool up) => new()
     {
         type = 1,
-        u = new InputUnion { ki = new KEYBDINPUT { wVk = vk, dwFlags = (up ? 2u : 0u) | (Extended(vk) ? 1u : 0u) } },
+        u = new InputUnion { ki = new KEYBDINPUT { wVk = vk, wScan = (ushort)MapVirtualKeyW(vk, 0), dwFlags = (up ? 2u : 0u) | (Extended(vk) ? 1u : 0u) } },
     };
+
+    [DllImport("user32.dll")] private static extern uint MapVirtualKeyW(uint code, uint mapType);
 
     private static INPUT Unicode(char ch, bool up) => new()
     {
@@ -131,6 +146,7 @@ public static class KeySender
         var x = string.Join("+", combo.Select(k => k switch
         {
             "win" => "super", "ctrl" or "shift" or "alt" => k,
+            "lshift" => "Shift_L", "rshift" => "Shift_R", "lctrl" => "Control_L", "rctrl" => "Control_R", "lalt" => "Alt_L", "ralt" => "Alt_R",
             _ when Special.TryGetValue(k, out var s) => s.X,
             _ when k[0] == 'f' && k.Length > 1 => k.ToUpperInvariant(),
             _ => k,
@@ -139,7 +155,7 @@ public static class KeySender
         if (Sh.Which("wtype") is not null)
         {
             var args = new List<string>();
-            var mods = combo.Where(Modifiers.Contains).Select(m => m == "win" ? "logo" : m).ToList();
+            var mods = combo.Where(Modifiers.Contains).Select(Unsided).Select(m => m == "win" ? "logo" : m).ToList();
             foreach (var m in mods) args.AddRange(["-M", m]);
             var key = combo.FirstOrDefault(k => !Modifiers.Contains(k));
             if (key is not null) args.AddRange(["-k", Special.TryGetValue(key, out var s) ? s.X : key]);
@@ -162,7 +178,7 @@ public static class KeySender
 
     private static void MacKeystroke(List<string> combo)
     {
-        var mods = combo.Where(Modifiers.Contains).Select(m => m switch { "win" => "command down", "ctrl" => "control down", "alt" => "option down", _ => "shift down" }).ToList();
+        var mods = combo.Where(Modifiers.Contains).Select(Unsided).Select(m => m switch { "win" => "command down", "ctrl" => "control down", "alt" => "option down", _ => "shift down" }).ToList();
         var key = combo.FirstOrDefault(k => !Modifiers.Contains(k));
         if (key is not null && Special.TryGetValue(key, out var s) && s.Mac < 0)
         {

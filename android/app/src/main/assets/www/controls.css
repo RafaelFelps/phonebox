@@ -52,3 +52,6 @@
 @media (pointer: coarse){
   .radio-nav{width:22px;height:34px;opacity:.72}
 }
+
+/* horizontal faders: slider, small value and an icon mute on one line */
+.deck-channel-line{display:flex;align-items:center;gap:10px;min-width:0}.deck-channel-line .deck-slider{flex:1}.deck-channel-line .deck-value{font-size:14px;font-weight:650;min-width:2.4em;text-align:right;color:var(--muted,#94a3b8)}.deck-icon-btn{flex:none;width:40px;height:36px;min-height:36px;padding:0;display:grid;place-items:center}.deck-icon-btn svg{width:20px;height:20px;display:block}.deck-muted .deck-icon-btn{color:#f87171;border-color:#f8717166;background:#f8717120}

@@ -64,7 +64,11 @@ function slider(label, send, max = 100) {
 }
 function meter(value) { const e = h('div', 'deck-meter', h('i')); e.firstChild.style.transform = `scaleX(${Math.max(0, Math.min(1, value || 0))})`; return e; }
 
+// the mute button of a horizontal fader: a speaker icon (static markup only), crossed out while muted
+const SPEAKER = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H2v6h4l5 4z"/>';
+const speakerIcon = (muted) => SPEAKER + (muted ? '<path d="M22 9l-6 6M16 9l6 6"/></svg>' : '<path d="M15.5 8.5a5 5 0 0 1 0 7M19 5a10 10 0 0 1 0 14"/></svg>');
 function audioView(box, options, mode) {
+  const compact = options.layout !== 'vertical';
   const root = h('div', `deck-list ${options.layout === 'vertical' ? 'deck-vertical' : ''}`);
   box.append(root);
   const rows = new Map();
@@ -95,11 +99,19 @@ function audioView(box, options, mode) {
           left.set(item.volume); right.set(item.volume);
           balance.push(left, right);
           el.append(h('label', '', 'L', left.input, left.number), h('label', '', 'R', right.input, right.number));
+        } else if (mode !== 'meter' && compact) {
+          // one line: the fader, a small value and an icon-only mute button
+          mute.classList.add('deck-icon-btn');
+          el.append(h('div', 'deck-channel-line', controls.input, controls.number, mute));
         } else if (mode !== 'meter') el.append(controls.input, h('div', 'deck-channel-foot', controls.number, mute));
         row = { el, name, signal, controls, mute, item, balance }; rows.set(item.id, row);
       }
       row.item = item; row.name.textContent = item.name;
-      row.controls.set(item.volume); row.mute.textContent = item.muted ? t('w.unmute') : t('w.mute');
+      row.controls.set(item.volume);
+      if (row.mute.classList.contains('deck-icon-btn')) {
+        if (row.mute.dataset.muted !== String(item.muted)) { row.mute.innerHTML = speakerIcon(item.muted); row.mute.dataset.muted = String(item.muted); }
+        row.mute.setAttribute('aria-label', (item.muted ? t('w.unmute') : t('w.mute')) + ' ' + item.name);
+      } else row.mute.textContent = item.muted ? t('w.unmute') : t('w.mute');
       row.controls.input.disabled = item.canControl === false; row.mute.disabled = item.canControl === false;
       row.balance.forEach((slider, channel) => { const value = item.channelVolumes?.[channel]; slider.input.disabled = value == null; slider.set(value || 0); if (value == null) slider.number.textContent = 'n/a'; });
       row.mute.setAttribute('aria-pressed', String(item.muted));

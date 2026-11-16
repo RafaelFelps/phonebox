@@ -454,6 +454,25 @@ dd { margin: 0; word-break: break-all; }
         <div class="row"><button class="btn sm" id="discordConnect">Connect</button><button class="btn sm" id="discordDisconnect">Sign out</button><span class="hint" id="discordState"></span></div>
       </div>
 
+      <div class="card">
+        <h3>Steam</h3>
+        <p class="hint" style="margin:0 0 12px">The <b>Steam</b> widgets read the Steam client on this PC: installed games, downloads, play time and screenshots, with no account needed. With a <b>Web API key</b> from <a href="https://steamcommunity.com/dev/apikey" target="_blank" rel="noopener">steamcommunity.com/dev/apikey</a> they also show friends, achievements, recently played games and wishlist sales. Friends and achievements need your Steam profile and game details set to public. The key stays on this PC and is never sent to the phone.</p>
+        <div class="grid2">
+          <div class="field"><label>Web API key</label><input type="password" data-bind="steam.apiKey" autocomplete="off" spellcheck="false"></div>
+          <div class="field"><label>SteamID64 (empty = the account signed in to Steam here)</label><input type="text" data-bind="steam.steamId" inputmode="numeric" spellcheck="false" autocomplete="off" placeholder="7656119…"></div>
+          <div class="field"><label>Store country (prices)</label><input type="text" data-bind="steam.country" maxlength="2" spellcheck="false" placeholder="br"></div>
+          <div class="field"><label>Language (achievements and news)</label><select data-bind="steam.language"><option value="brazilian">Português (Brasil)</option><option value="english">English</option><option value="spanish">Español</option><option value="latam">Español (Latinoamérica)</option><option value="french">Français</option><option value="german">Deutsch</option><option value="portuguese">Português (Portugal)</option></select></div>
+        </div>
+        <div class="row" style="flex-wrap:wrap;gap:14px;margin:4px 0 10px">
+          <span style="font-weight:600">Notify the phone when</span>
+          <label class="row" style="gap:6px"><label class="switch"><input type="checkbox" data-bind="steam.notifyDownloads"><span></span></label> a download finishes</label>
+          <label class="row" style="gap:6px"><label class="switch"><input type="checkbox" data-bind="steam.notifyAchievements"><span></span></label> you unlock an achievement</label>
+          <label class="row" style="gap:6px"><label class="switch"><input type="checkbox" data-bind="steam.notifyFriends"><span></span></label> a friend starts a game</label>
+          <label class="row" style="gap:6px"><label class="switch"><input type="checkbox" data-bind="steam.notifySales"><span></span></label> a wishlist game goes on sale</label>
+        </div>
+        <div class="row"><button class="btn sm" id="steamTest">Test</button><span class="hint" id="steamState"></span></div>
+      </div>
+
 
       <div class="card">
         <h3 data-i18n="s.night.title">Night mode</h3>
@@ -1635,6 +1654,21 @@ async function discordStatus() {
     return s;
   } catch (_) { $('discordState').textContent = ''; return null; }
 }
+async function steamStatus() {
+  $('steamState').textContent = 'Checking…';
+  try {
+    const r = await (await fetch('/api/steam-test')).json();
+    const parts = [];
+    parts.push(r.client ? `Steam found (${r.installed} games installed)` : 'Steam client not found on this PC');
+    if (r.user) parts.push(`account: ${r.user}`);
+    parts.push(r.message);
+    $('steamState').textContent = (r.ok ? '✓ ' : '⚠ ') + parts.filter(Boolean).join(' · ');
+  } catch (_) { $('steamState').textContent = 'Could not reach the agent'; }
+}
+$('steamTest').onclick = async () => {
+  if (JSON.stringify(cfg) !== saved && !(await save())) return;
+  steamStatus();
+};
 $('discordConnect').onclick = async () => {
   if (JSON.stringify(cfg) !== saved && !(await save())) return;
   if (!cfg.discord?.enabled || !cfg.discord?.clientId || !cfg.discord?.clientSecret) { toast('Turn Discord on and add the client ID and secret first', true); return; }
@@ -1701,7 +1735,7 @@ const RULE_PRESETS = [
 let activeRules = [];
 
 function renderRules() {
-  cfg.rules ??= []; cfg.calendars ??= []; cfg.phones ??= []; cfg.homeAssistant ??= {}; cfg.obs ??= { enabled: false, url: 'ws://127.0.0.1:4455' }; cfg.discord ??= { enabled: false };
+  cfg.rules ??= []; cfg.calendars ??= []; cfg.phones ??= []; cfg.homeAssistant ??= {}; cfg.obs ??= { enabled: false, url: 'ws://127.0.0.1:4455' }; cfg.discord ??= { enabled: false }; cfg.steam ??= { country: 'br', language: 'brazilian', notifyDownloads: true, notifyAchievements: true, notifyFriends: true, notifySales: true };
   $('rulePresets').replaceChildren(...RULE_PRESETS.map(([label, make]) => h('button', { class: 'btn', onclick: () => {
     cfg.rules.push({ id: '', enabled: true, ...make() });
     renderRules(); changed();

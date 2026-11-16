@@ -1,0 +1,269 @@
+import { API, PANEL_HEADERS, api, fmtDur, h, haptic, shortDur, toast } from '../main.js';
+import { W } from '../registry.js';
+import { every } from './helpers.js';
+
+// Steam: the Steam client on the PC (games, downloads, play time, screenshots) and, with a Web API key in
+// Settings › Steam, friends, achievements, news and wishlist sales. Five widgets share one reading of /api/steam.
+const STATES = ['Offline', 'Online', 'Busy', 'Away', 'Snooze', 'Looking to trade', 'Looking to play'];
+const STATUS_TEXT = {
+  off: 'Add a Steam widget to a page',
+  'not-installed': 'Steam is not installed on the PC',
+};
+
+// one request for every Steam widget on screen
+let shared = null, sharedAt = 0, inflight = null;
+async function steamData(maxAge = 2500) {
+  if (shared && Date.now() - sharedAt < maxAge) return shared;
+  inflight ??= api('/steam').then((d) => { shared = d; sharedAt = Date.now(); return d; }).finally(() => { inflight = null; });
+  return inflight;
+}
+
+const cover = (app, kind = 'portrait') => `${API}/steam/cover?app=${app}&kind=${kind}`;
+const proxied = (url) => (url ? `${API}/steam/img?u=${encodeURIComponent(url)}` : '');
+const img = (src, cls, alt = '') => {
+  const i = h('img', cls);
+  i.alt = alt; i.loading = 'lazy'; i.decoding = 'async';
+  if (src) i.src = src;
+  i.onerror = () => i.classList.add('broken');
+  return i;
+};
+const bytes = (n) => (n >= 1e9 ? (n / 1e9).toFixed(1) + ' GB' : n >= 1e6 ? Math.round(n / 1e6) + ' MB' : Math.round((n || 0) / 1e3) + ' KB');
+const hours = (min) => (min >= 60 ? `${(min / 60).toFixed(min >= 600 ? 0 : 1)} h` : `${min} min`);
+
+async function post(path, okText) {
+  haptic();
+  try {
+    const r = await fetch(`${API}/steam/${path}`, { method: 'POST', cache: 'no-store', headers: PANEL_HEADERS });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) { toast(j.error || 'Steam did not answer', 'err'); return false; }
+    if (okText) toast(okText, 'ok');
+    return true;
+  } catch (_) { toast('The PC did not answer', 'err'); return false; }
+}
+
+function message(box, s, needKey = false) {
+  if (!s) return 'Loading…';
+  if (s.status !== 'ok') return STATUS_TEXT[s.status] || s.status;
+  if (needKey && !s.hasKey) return 'Add your Steam Web API key in Settings › Steam on the PC';
+  if (needKey && s.error) return '⚠ ' + s.error;
+  return null;
+}
+
+function downloadRow(d) {
+  const eta = d.bytesPerSec > 0 && d.total > d.done ? ` · ${shortDur(((d.total - d.done) / d.bytesPerSec) * 1000)} left` : '';
+  const speed = d.bytesPerSec > 0 ? ` · ${bytes(d.bytesPerSec)}/s` : '';
+  const phase = d.phase === 'installing' ? 'Installing' : d.phase === 'queued' ? 'Queued' : 'Downloading';
+  const bar = h('div', 'st-bar', h('i'));
+  bar.firstChild.style.width = `${d.progress}%`;
+  return h('div', 'st-dl', img(cover(d.appId, 'header'), 'st-dl-img'),
+    h('div', 'st-dl-main', h('div', 'st-dl-name', d.name), bar,
+      h('div', 'st-dl-meta', `${phase} ${Math.round(d.progress)}%` + (d.total ? ` · ${bytes(d.done)} of ${bytes(d.total)}` : '') + speed + eta)));
+}
+
+// ================================================================ Now playing
+W.steam = {
+  needs: ['tick'],
+  create(box, { o }) {
+    let data = null, key = '';
+    const control = o.control !== false;
+    box.classList.add('st');
+    const render = () => {
+      const s = data;
+      const k = JSON.stringify([s?.status, s?.user, s?.state, s?.playing, s?.achievements, s?.downloads, s?.error, s?.hasKey, box.clientWidth, box.clientHeight, Math.floor(Date.now() / 30000)]);
+      if (k === key) return;
+      key = k;
+      const msg = message(box, s);
+      if (msg) { box.replaceChildren(h('div', 'w-title', o.title || 'Steam'), h('div', 'empty', msg)); return; }
+      const head = h('div', 'st-head',
+        s.avatar ? img(proxied(s.avatar), 'st-av') : h('div', 'st-av st-av-none', '🎮'),
+        h('div', 'st-who', h('div', 'st-name', s.user || 'Steam'),
+          h('div', 'st-state st-s' + (s.state ?? (s.clientRunning ? 1 : 0)), s.state != null ? STATES[s.state] || 'Online' : s.clientRunning ? 'Steam is open' : 'Steam is closed')));
+      if (control) {
+        const chips = h('div', 'st-chips');
+        for (const [st, label] of [['online', 'Online'], ['away', 'Away'], ['invisible', 'Invisible'], ['offline', 'Offline']]) {
+          const b = h('button', 'st-chip' + ((st === 'online' && s.state === 1) || (st === 'away' && s.state === 3) || (st === 'offline' && s.state === 0 && s.clientRunning) ? ' on' : ''), label);
+          b.addEventListener('click', async () => { if (await post(`status/${st}`)) { setTimeout(() => { sharedAt = 0; }, 1500); } });
+          chips.append(b);
+        }
+        head.append(chips);
+      }
+      const p = s.playing, a = s.achievements;
+      const body = h('div', 'st-body');
+      const app = p?.appId || a?.appId;
+      if (app) {
+        const info = h('div', 'st-info',
+          h('div', 'st-label', p ? 'Playing now' : 'Last played'),
+          h('div', 'st-game', p?.name || a?.game || ''));
+        if (p?.since) info.append(h('div', 'st-meta', `Session: ${fmtDur(Date.now() - p.since)}`));
+        if (p?.players) info.append(h('div', 'st-meta', `${p.players.toLocaleString()} playing worldwide`));
+        if (a && a.total) {
+          const bar = h('div', 'st-bar', h('i'));
+          bar.firstChild.style.width = `${(a.done / a.total) * 100}%`;
+          info.append(h('div', 'st-ach-head', h('span', '', '🏆 Achievements'), h('b', '', `${a.done}/${a.total}`)), bar);
+          const icons = h('div', 'st-ach-icons', ...a.recent.slice(0, 6).map((x) => { const i = img(proxied(x.icon), 'st-ach-ico', x.name); i.title = x.name; return i; }));
+          if (a.recent.length) info.append(icons, h('div', 'st-meta st-ach-last', `Last: ${a.recent[0].name}`));
+        } else if (!s.hasKey) info.append(h('div', 'st-meta st-hint', 'Achievements need the Steam API key (Settings › Steam)'));
+        body.append(img(cover(app), 'st-cover', ''), info);
+      } else body.append(h('div', 'empty', 'Not playing anything'));
+      const parts = [head, body];
+      if (s.downloads?.length) parts.push(h('div', 'st-dls', ...s.downloads.slice(0, 2).map(downloadRow)));
+      if (control) {
+        const bar = h('div', 'st-actions');
+        for (const [page, label] of [['friends', 'Friends'], ['library', 'Library'], ['downloads', 'Downloads'], ['bigpicture', 'Big Picture']]) {
+          const b = h('button', 'st-btn', label);
+          b.addEventListener('click', () => post(`open/${page}`));
+          bar.append(b);
+        }
+        parts.push(bar);
+      }
+      box.replaceChildren(...parts);
+    };
+    const tick = every(3000, async () => { try { data = await steamData(); render(); return true; } catch (_) { return false; } }, 5000);
+    return { update: () => { tick(); render(); } };
+  },
+};
+
+// ================================================================ Friends
+W['steam-friends'] = {
+  needs: ['tick'],
+  create(box, { o }) {
+    let data = null, key = '';
+    box.classList.add('st');
+    const list = h('div', 'st-friends');
+    const title = h('div', 'w-title', o.title || 'Steam friends', h('span', 'st-count'));
+    box.append(title, list);
+    const render = () => {
+      const s = data;
+      const msg = message(box, s, true);
+      const k = JSON.stringify([msg, s?.friends, o.offline]);
+      if (k === key) return;
+      key = k;
+      if (msg) { list.replaceChildren(h('div', 'empty', msg)); return; }
+      const online = s.friends.filter((f) => f.state > 0);
+      title.querySelector('.st-count').textContent = ` ${online.length} online`;
+      const shown = o.offline ? s.friends : online;
+      if (!shown.length) { list.replaceChildren(h('div', 'empty', s.friends.length ? 'No friends online' : 'Your friends list is empty or private')); return; }
+      list.replaceChildren(...shown.map((f) => h('div', 'st-friend' + (f.game ? ' playing' : f.state === 0 ? ' off' : ''),
+        img(proxied(f.avatar), 'st-fav'),
+        h('div', 'st-fmain', h('div', 'st-fname', f.name),
+          h('div', 'st-fgame', f.game ? f.game : f.state === 0 ? (f.lastOff ? `Last online ${shortDur(Date.now() - f.lastOff)} ago` : 'Offline') : STATES[f.state] || 'Online')))));
+    };
+    const tick = every(5000, async () => { try { data = await steamData(); render(); return true; } catch (_) { return false; } }, 5000);
+    return { update: () => { tick(); render(); } };
+  },
+};
+
+// ================================================================ Library (launcher)
+W['steam-library'] = {
+  needs: ['tick'],
+  create(box, { o }) {
+    let games = null, data = null, key = '';
+    const control = o.control !== false;
+    box.classList.add('st');
+    const dls = h('div', 'st-dls');
+    const grid = h('div', 'st-grid');
+    box.append(h('div', 'w-title', o.title || 'Steam library'), dls, grid);
+    const render = () => {
+      const msg = message(box, data);
+      const k = JSON.stringify([msg, games?.map((g) => [g.appId, g.downloading]), data?.downloads, o.sort, box.clientWidth]);
+      if (k === key) return;
+      key = k;
+      if (msg) { grid.replaceChildren(h('div', 'empty', msg)); dls.replaceChildren(); return; }
+      dls.replaceChildren(...(data.downloads || []).slice(0, 1).map(downloadRow));
+      if (!games) { grid.replaceChildren(h('div', 'empty', 'Loading…')); return; }
+      if (!games.length) { grid.replaceChildren(h('div', 'empty', 'No games installed')); return; }
+      const list = [...games];
+      if (o.sort === 'name') list.sort((a, b) => a.name.localeCompare(b.name));
+      else if (o.sort === 'playtime') list.sort((a, b) => b.playtimeMin - a.playtimeMin);
+      grid.replaceChildren(...list.map((g) => {
+        const card = h('button', 'st-card' + (g.downloading ? ' busy' : ''), img(cover(g.appId), 'st-card-img', g.name),
+          h('div', 'st-card-name', g.name), h('div', 'st-card-meta', g.playtimeMin ? hours(g.playtimeMin) : 'Never played'));
+        card.addEventListener('click', () => {
+          if (!control) return;
+          if (g.downloading) { toast(`${g.name} is still downloading`, 'warn'); return; }
+          post(`launch/${g.appId}`, `Starting ${g.name} on the PC…`);
+        });
+        return card;
+      }));
+    };
+    const loadGames = every(60_000, async () => { try { games = (await api('/steam/library')).games || []; render(); return true; } catch (_) { return false; } }, 10_000);
+    const tick = every(4000, async () => { try { data = await steamData(); render(); return true; } catch (_) { return false; } }, 5000);
+    return { update: () => { loadGames(); tick(); render(); } };
+  },
+};
+
+// ================================================================ Screenshots
+W['steam-screenshots'] = {
+  needs: ['tick'],
+  create(box, { o }) {
+    let shots = null, key = '', status = null;
+    box.classList.add('st');
+    const grid = h('div', 'st-shots');
+    box.append(h('div', 'w-title', o.title || 'Steam screenshots'), grid);
+    const open = (s) => {
+      haptic();
+      const big = img(`${API}/steam/shot?app=${s.app}&file=${encodeURIComponent(s.file)}`, 'st-shot-big', s.game);
+      const layer = h('div', 'st-viewer', big, h('div', 'st-viewer-cap', `${s.game} · ${new Date(s.taken).toLocaleString()}`));
+      layer.addEventListener('click', () => layer.remove());
+      document.body.append(layer);
+    };
+    const render = () => {
+      const msg = status ? message(box, status) : null;
+      const k = JSON.stringify([msg, shots?.map((s) => s.file)]);
+      if (k === key) return;
+      key = k;
+      if (msg) { grid.replaceChildren(h('div', 'empty', msg)); return; }
+      if (!shots) { grid.replaceChildren(h('div', 'empty', 'Loading…')); return; }
+      if (!shots.length) { grid.replaceChildren(h('div', 'empty', 'No screenshots yet: press F12 in a game')); return; }
+      grid.replaceChildren(...shots.slice(0, +o.count || 24).map((s) => {
+        const b = h('button', 'st-shot', img(`${API}/steam/shot?app=${s.app}&file=${encodeURIComponent(s.file)}&thumb=true`, 'st-shot-img', s.game),
+          h('div', 'st-shot-cap', s.game));
+        b.addEventListener('click', () => open(s));
+        return b;
+      }));
+    };
+    const load = every(30_000, async () => {
+      try { status = await steamData(10_000); shots = (await api('/steam/screenshots')).shots || []; render(); return true; } catch (_) { return false; }
+    }, 10_000);
+    return { update: () => { load(); render(); } };
+  },
+};
+
+// ================================================================ Store: wishlist sales and news
+W['steam-store'] = {
+  needs: ['tick'],
+  create(box, { o }) {
+    let data = null, key = '', tab = o.start === 'news' ? 'news' : 'sales';
+    box.classList.add('st');
+    const tabs = h('div', 'seg', h('button', tab === 'sales' ? 'on' : null, 'Sales'), h('button', tab === 'news' ? 'on' : null, 'News'));
+    const list = h('div', 'st-store');
+    box.append(h('div', 'st-store-head', h('span', 'w-title', o.title || 'Steam'), tabs), list);
+    [...tabs.children].forEach((b, i) => b.addEventListener('click', () => {
+      haptic(); tab = i ? 'news' : 'sales';
+      [...tabs.children].forEach((x, j) => x.classList.toggle('on', j === i));
+      key = ''; render();
+    }));
+    const render = () => {
+      const s = data;
+      const msg = message(box, s, tab === 'sales');
+      const k = JSON.stringify([msg, tab, s?.sales, s?.news, s?.newsGame]);
+      if (k === key) return;
+      key = k;
+      if (msg) { list.replaceChildren(h('div', 'empty', msg)); return; }
+      if (tab === 'sales') {
+        if (!s.sales.length) { list.replaceChildren(h('div', 'empty', 'No wishlist game is on sale right now')); return; }
+        list.replaceChildren(...s.sales.map((x) => h('div', 'st-sale', img(cover(x.appId, 'header'), 'st-sale-img', x.name),
+          h('div', 'st-sale-main', h('div', 'st-sale-name', x.name),
+            h('div', 'st-sale-price', h('span', 'st-off', `-${x.discount}%`), x.was ? h('s', '', x.was) : '', h('b', '', x.price))))));
+      } else {
+        if (!s.news.length) { list.replaceChildren(h('div', 'empty', 'No news')); return; }
+        list.replaceChildren(h('div', 'st-news-game', `News · ${s.newsGame || ''}`), ...s.news.map((n) => h('div', 'st-news',
+          h('div', 'st-news-title', n.title),
+          h('div', 'st-news-meta', [n.feed, n.date ? new Date(n.date).toLocaleDateString() : ''].filter(Boolean).join(' · ')),
+          h('div', 'st-news-text', n.contents))));
+      }
+    };
+    const tick = every(30_000, async () => { try { data = await steamData(10_000); render(); return true; } catch (_) { return false; } }, 10_000);
+    return { update: () => { tick(); render(); } };
+  },
+};

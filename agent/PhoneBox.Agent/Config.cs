@@ -32,6 +32,8 @@ public sealed class AgentConfig
     public ObsConfig Obs { get; set; } = new();
     /// <summary>Discord desktop app over its local RPC socket (Discord widget); the client secret never goes to the phone.</summary>
     public DiscordConfig Discord { get; set; } = new();
+    /// <summary>Steam widgets: the local client, plus the Steam Web API with the user's key (the key never goes to the phone).</summary>
+    public SteamConfig Steam { get; set; } = new();
 
     /// <summary>The pages a phone shows: its own selection (Settings › Phones), or all of them.</summary>
     public IEnumerable<PageConfig> PagesFor(string? deviceId)
@@ -300,6 +302,22 @@ public sealed class DiscordConfig
     public string? RedirectUri { get; set; } = "http://localhost";
 }
 
+public sealed class SteamConfig
+{
+    /// <summary>A Steam Web API key from steamcommunity.com/dev/apikey (friends, achievements, wishlist).</summary>
+    public string? ApiKey { get; set; }
+    /// <summary>SteamID64; empty = the account signed in to the Steam client on this computer.</summary>
+    public string? SteamId { get; set; }
+    /// <summary>Store country for prices (two letters, e.g. br, us).</summary>
+    public string Country { get; set; } = "br";
+    /// <summary>Store language for achievement names and news (Steam's names: brazilian, english, spanish…).</summary>
+    public string Language { get; set; } = "brazilian";
+    public bool NotifyDownloads { get; set; } = true;
+    public bool NotifyAchievements { get; set; } = true;
+    public bool NotifyFriends { get; set; } = true;
+    public bool NotifySales { get; set; } = true;
+}
+
 public sealed class HomeAssistantConfig
 {
     public string? Url { get; set; }
@@ -504,6 +522,11 @@ public sealed partial class ConfigStore(string path)
         c.Discord.ClientId = string.IsNullOrWhiteSpace(c.Discord.ClientId) ? null : c.Discord.ClientId.Trim();
         c.Discord.ClientSecret = string.IsNullOrWhiteSpace(c.Discord.ClientSecret) ? null : c.Discord.ClientSecret.Trim();
         c.Discord.RedirectUri = string.IsNullOrWhiteSpace(c.Discord.RedirectUri) ? "http://localhost" : c.Discord.RedirectUri.Trim();
+        c.Steam ??= new();
+        c.Steam.ApiKey = string.IsNullOrWhiteSpace(c.Steam.ApiKey) ? null : c.Steam.ApiKey.Trim();
+        c.Steam.SteamId = string.IsNullOrWhiteSpace(c.Steam.SteamId) ? null : c.Steam.SteamId.Trim();
+        c.Steam.Country = c.Steam.Country is { Length: 2 } cc && cc.All(char.IsAsciiLetter) ? cc.ToLowerInvariant() : "br";
+        c.Steam.Language = string.IsNullOrWhiteSpace(c.Steam.Language) || !c.Steam.Language.Trim().All(char.IsAsciiLetter) ? "brazilian" : c.Steam.Language.Trim().ToLowerInvariant();
         c.HomeAssistant ??= new();
         c.HomeAssistant.Url = string.IsNullOrWhiteSpace(c.HomeAssistant.Url) ? null : c.HomeAssistant.Url.Trim().TrimEnd('/');
         c.HomeAssistant.Token = string.IsNullOrWhiteSpace(c.HomeAssistant.Token) ? null : c.HomeAssistant.Token.Trim();

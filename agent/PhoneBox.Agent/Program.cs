@@ -73,6 +73,7 @@ AddMonitor<CalendarMonitor>(builder.Services);
 AddMonitor<DockerMonitor>(builder.Services);
 AddMonitor<ObsMonitor>(builder.Services);
 AddMonitor<DiscordMonitor>(builder.Services);
+AddMonitor<SteamMonitor>(builder.Services);
 AddMonitor<BatteryMonitor>(builder.Services);
 AddMonitor<RuleEngine>(builder.Services);
 AddMonitor<ChargeGuard>(builder.Services);
@@ -496,6 +497,43 @@ app.MapGet("/api/discord-avatar", async (string? u, string? h, DiscordMonitor di
     ctx.Response.Headers.CacheControl = "private, max-age=21600";
     return Results.Bytes(bytes, "image/png");
 });
+// Steam (widgets): the client's games, downloads and screenshots, and with an API key friends, achievements, news and
+// wishlist sales. Covers, avatars and achievement icons come through the agent (Steam's image hosts only).
+static bool SteamOn(ConfigStore cfg) => SteamMonitor.WidgetOn(cfg.Get());
+static bool SteamControl(ConfigStore cfg) => cfg.Get().Widgets(enabledPagesOnly: true).Any(w => w.Type.StartsWith("steam", StringComparison.Ordinal) && w.Bool("control") != false);
+app.MapGet("/api/steam", (SteamMonitor steam) => Results.Json(steam.Snapshot()));
+app.MapGet("/api/steam/library", (SteamMonitor steam, ConfigStore cfg) => SteamOn(cfg) ? Results.Json(new { games = steam.Library() }) : Results.Json(new { games = Array.Empty<object>() }));
+app.MapGet("/api/steam/screenshots", (SteamMonitor steam, ConfigStore cfg) => SteamOn(cfg) ? Results.Json(steam.Screenshots()) : Results.Json(new { shots = Array.Empty<object>() }));
+app.MapGet("/api/steam/shot", (long app, string file, bool? thumb, SteamMonitor steam, ConfigStore cfg, HttpContext ctx) =>
+{
+    if (!SteamOn(cfg) || steam.ScreenshotFile(app, file, thumb == true) is not { } path) return Results.NotFound();
+    ctx.Response.Headers.CacheControl = "private, max-age=86400";
+    return Results.File(path, "image/jpeg");
+});
+app.MapGet("/api/steam/cover", async (long app, string? kind, SteamMonitor steam, ConfigStore cfg, HttpContext ctx, CancellationToken ct) =>
+{
+    if (!SteamOn(cfg) || app <= 0 || await steam.Cover(app, kind != "header", ct) is not { } img) return Results.NotFound();
+    ctx.Response.Headers.CacheControl = "private, max-age=86400";
+    return Results.Bytes(img.Bytes, img.Type);
+});
+app.MapGet("/api/steam/img", async (string? u, SteamMonitor steam, ConfigStore cfg, HttpContext ctx, CancellationToken ct) =>
+{
+    if (!SteamOn(cfg) || await steam.Image(u, ct) is not { } img) return Results.NotFound();
+    ctx.Response.Headers.CacheControl = "private, max-age=43200";
+    return Results.Bytes(img.Bytes, img.Type);
+});
+app.MapPost("/api/steam/launch/{app:long}", (long app, SteamMonitor steam, ConfigStore cfg) =>
+    !SteamControl(cfg) ? Results.BadRequest(new { error = "Steam buttons are turned off in the widget's settings" })
+    : steam.Launch(app) is { } error ? Results.BadRequest(new { error }) : Results.Ok(new { ok = true }));
+app.MapPost("/api/steam/status/{status}", (string status, SteamMonitor steam, ConfigStore cfg) =>
+    !SteamControl(cfg) ? Results.BadRequest(new { error = "Steam buttons are turned off in the widget's settings" })
+    : steam.SetStatus(status) is { } error ? Results.BadRequest(new { error }) : Results.Ok(new { ok = true }));
+app.MapPost("/api/steam/open/{page}", (string page, SteamMonitor steam, ConfigStore cfg) =>
+    !SteamControl(cfg) ? Results.BadRequest(new { error = "Steam buttons are turned off in the widget's settings" })
+    : steam.OpenPage(page) is { } error ? Results.BadRequest(new { error }) : Results.Ok(new { ok = true }));
+// Settings › Steam › Test (local only: not under /api/steam, which the phone may reach over Wi-Fi)
+app.MapGet("/api/steam-test", async (SteamMonitor steam, CancellationToken ct) => Results.Json(await steam.Test(ct)));
+
 // Settings › General › Discord (local only: deliberately not under /api/discord, which the phone may reach over Wi-Fi)
 app.MapPost("/api/discord-connect", (DiscordMonitor discord) => { discord.RequestAuthorize(); return Results.Ok(); });
 app.MapPost("/api/discord-disconnect", (DiscordMonitor discord) => { discord.Disconnect(); return Results.Ok(); });

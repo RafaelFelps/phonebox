@@ -70,6 +70,82 @@ public sealed class SteamTests
         Assert.EndsWith("…", SteamMonitor.CleanNews(new string('a', 400)));
     }
 
+    /// <summary>Writes binary KeyValues: (key, value) pairs; a value that is an array opens a block.</summary>
+    private static byte[] Bin(params (string Key, object Value)[] items)
+    {
+        var ms = new MemoryStream();
+        void Key(string k) { var b = System.Text.Encoding.UTF8.GetBytes(k); ms.Write(b); ms.WriteByte(0); }
+        void Write((string Key, object Value)[] list)
+        {
+            foreach (var (k, v) in list)
+            {
+                switch (v)
+                {
+                    case (string, object)[] block: ms.WriteByte(0); Key(k); Write(block); ms.WriteByte(8); break;
+                    case string s: ms.WriteByte(1); Key(k); Key(s); break;
+                    case int n: ms.WriteByte(2); Key(k); ms.Write(BitConverter.GetBytes(n)); break;
+                }
+            }
+        }
+        Write(items);
+        ms.WriteByte(8);
+        return ms.ToArray();
+    }
+
+    private static (string, object)[] B(params (string, object)[] items) => items;
+
+    [Fact]
+    public void Reads_achievements_from_the_clients_stats_files()
+    {
+        var root = Directory.CreateTempSubdirectory("steam").FullName;
+        try
+        {
+            var stats = Path.Combine(root, "appcache", "stats");
+            Directory.CreateDirectory(stats);
+            var ach = (string api, string en, string br, object hidden) => (api, (object)B(("name", api), ("display", B(
+                ("name", B(("english", en), ("brazilian", br), ("token", "X"))),
+                ("desc", B(("english", en + " desc"))),
+                ("hidden", hidden), ("icon", api + ".jpg"), ("icon_gray", api + "_g.jpg")))));
+            File.WriteAllBytes(Path.Combine(stats, "UserGameStatsSchema_42.bin"), Bin(("42", B(("stats", B(
+                ("1", B(("bits", B(
+                    ("0", ach("WINGS", "Wings", "Asas", 0).Item2),
+                    ("1", ach("CROWN", "Crown", "Coroa", 0).Item2),
+                    ("2", ach("SECRET", "Secret", "Segredo", "1").Item2))))),
+                ("2", B(("type", 1)))))))));                       // a plain stat without achievements
+            // bits 0 and 2 unlocked; -1 would be all 32
+            File.WriteAllBytes(Path.Combine(stats, "UserGameStats_7_42.bin"), Bin(("cache", B(("crc", 123),
+                ("1", B(("data", 0b101), ("AchievementTimes", B(("0", 1_700_000_000), ("2", 1_700_000_500)))))))));
+            var steamId = SteamLocal.SteamId64Base + 7;
+
+            var list = SteamLocal.Achievements(root, steamId, 42, "brazilian")!;
+            Assert.Equal(["Asas", "Coroa", "Segredo"], list.Select(a => a.Name));
+            Assert.Equal([true, false, true], list.Select(a => a.Achieved));
+            Assert.Equal(1_700_000_500, list[2].UnlockedAt);
+            Assert.Equal(0, list[1].UnlockedAt);
+            Assert.True(list[2].Hidden);
+            Assert.Equal("Wings desc", list[0].Description);           // falls back to English
+            Assert.Equal("CROWN_g.jpg", list[1].IconGray);
+            Assert.Null(SteamLocal.Achievements(root, steamId, 43, "brazilian")); // never opened on this PC
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Theory]
+    [InlineData("abc.jpg", "https://shared.akamai.steamstatic.com/community_assets/images/apps/42/abc.jpg")]
+    [InlineData("https://steamcdn-a.akamaihd.net/steamcommunity/public/images/apps/42/abc.jpg", "https://shared.akamai.steamstatic.com/community_assets/images/apps/42/abc.jpg")]
+    [InlineData("https://avatars.steamstatic.com/x.jpg", "https://avatars.steamstatic.com/x.jpg")]
+    [InlineData(null, null)]
+    public void Achievement_icons_use_the_current_cdn(string? icon, string? url) =>
+        Assert.Equal(url, SteamMonitor.IconUrl(42, icon));
+
+    [Fact]
+    public void Binary_reader_stops_cleanly_on_a_truncated_file()
+    {
+        var bytes = Bin(("a", B(("n", 5), ("s", "text")))).AsSpan(0, 12).ToArray();
+        var v = Vdf.ParseBinary(bytes);
+        Assert.Equal(5, v.Child("a")!.Long("n"));
+    }
+
     [Fact]
     public void Finds_covers_in_old_and_new_cache_layouts()
     {

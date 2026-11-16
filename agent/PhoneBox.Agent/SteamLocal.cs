@@ -88,6 +88,77 @@ public sealed class Vdf
         try { return File.Exists(path) ? Parse(File.ReadAllText(path)) : null; }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return null; }
     }
+
+    /// <summary>
+    /// The binary KeyValues the client writes to appcache (stats files): a type byte, a null-terminated key, then the
+    /// value; 0 opens a block, 8 (or 11) closes one. Numbers are kept as their text so <see cref="Long"/> reads them.
+    /// A truncated or unknown entry ends the reading with what was parsed so far.
+    /// </summary>
+    public static Vdf ParseBinary(ReadOnlySpan<byte> data)
+    {
+        var root = new Vdf();
+        var stack = new Stack<Vdf>();
+        stack.Push(root);
+        var i = 0;
+        string? Text(ReadOnlySpan<byte> d)
+        {
+            var end = d[i..].IndexOf((byte)0);
+            if (end < 0) return null;
+            var s = Encoding.UTF8.GetString(d.Slice(i, end));
+            i += end + 1;
+            return s;
+        }
+        while (i < data.Length)
+        {
+            var type = data[i++];
+            if (type is 8 or 11)
+            {
+                if (stack.Count == 1) break;
+                stack.Pop();
+                continue;
+            }
+            var key = Text(data);
+            if (key is null) break;
+            switch (type)
+            {
+                case 0:
+                    var block = new Vdf();
+                    stack.Peek().Set(key, block);
+                    stack.Push(block);
+                    break;
+                case 1:
+                    if (Text(data) is not { } str) return root;
+                    stack.Peek().Set(key, str);
+                    break;
+                case 2 or 4 or 6: // int32, pointer, color
+                    if (i + 4 > data.Length) return root;
+                    stack.Peek().Set(key, System.Buffers.Binary.BinaryPrimitives.ReadInt32LittleEndian(data.Slice(i, 4)).ToString());
+                    i += 4;
+                    break;
+                case 3:
+                    if (i + 4 > data.Length) return root;
+                    stack.Peek().Set(key, System.Buffers.Binary.BinaryPrimitives.ReadSingleLittleEndian(data.Slice(i, 4)).ToString(System.Globalization.CultureInfo.InvariantCulture));
+                    i += 4;
+                    break;
+                case 7 or 10: // uint64, int64
+                    if (i + 8 > data.Length) return root;
+                    stack.Peek().Set(key, type == 7
+                        ? System.Buffers.Binary.BinaryPrimitives.ReadUInt64LittleEndian(data.Slice(i, 8)).ToString()
+                        : System.Buffers.Binary.BinaryPrimitives.ReadInt64LittleEndian(data.Slice(i, 8)).ToString());
+                    i += 8;
+                    break;
+                default:
+                    return root;
+            }
+        }
+        return root;
+    }
+
+    public static Vdf? LoadBinary(string path)
+    {
+        try { return File.Exists(path) ? ParseBinary(File.ReadAllBytes(path)) : null; }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return null; }
+    }
 }
 
 /// <param name="Downloading">Steam is fetching or installing an update for it.</param>
@@ -97,6 +168,10 @@ public sealed record SteamGame(long AppId, string Name, long SizeBytes, string L
 public sealed record SteamPlay(long LastPlayed, long PlaytimeMin);
 
 public sealed record SteamShot(long AppId, string File, long Taken, long Size);
+
+/// <param name="UnlockedAt">Unix seconds; 0 when locked or the time is unknown.</param>
+public sealed record SteamLocalAchievement(string ApiName, string Name, string? Description, string? Icon, string? IconGray,
+    bool Hidden, bool Achieved, long UnlockedAt);
 
 /// <summary>What the Steam client keeps on this computer: install folders, games, play time, screenshots.</summary>
 public static class SteamLocal
@@ -242,6 +317,47 @@ public static class SteamLocal
             }
         }
         return list.OrderByDescending(s => s.Taken).Take(max).ToList();
+    }
+
+    /// <summary>
+    /// The achievements the client keeps for a game in appcache/stats, so a private profile still sees its own:
+    /// UserGameStatsSchema_&lt;app&gt;.bin names them (every language, icons, hidden ones) and
+    /// UserGameStats_&lt;account&gt;_&lt;app&gt;.bin holds the unlocked bits and times. Null until the game has
+    /// been opened on this PC (the client writes both files then).
+    /// </summary>
+    public static List<SteamLocalAchievement>? Achievements(string root, long steamId, long app, string language)
+    {
+        var dir = Path.Combine(root, "appcache", "stats");
+        var user = Path.Combine(dir, $"UserGameStats_{steamId - SteamId64Base}_{app}.bin");
+        if (!File.Exists(user)) return null;
+        var schema = Vdf.LoadBinary(Path.Combine(dir, $"UserGameStatsSchema_{app}.bin"));
+        var stats = schema?.Child(app.ToString())?.Child("stats");
+        if (stats is null) return null;
+        return ReadAchievements(stats, Vdf.LoadBinary(user)?.Child("cache"), language);
+    }
+
+    /// <summary>Joins a schema's "stats" block with a user file's "cache" block (separate for tests).</summary>
+    public static List<SteamLocalAchievement> ReadAchievements(Vdf stats, Vdf? cache, string language)
+    {
+        static string? Lang(Vdf? text, string language) =>
+            text is null ? null : text[language] ?? text["english"] ?? text.Keys.Where(k => k != "token").Select(k => text[k]).FirstOrDefault(v => v is not null);
+        var list = new List<SteamLocalAchievement>();
+        foreach (var (statId, stat) in stats.Children().OrderBy(s => long.TryParse(s.Key, out var n) ? n : long.MaxValue))
+        {
+            if (stat.Child("bits") is not { } bits) continue;
+            var mine = cache?.Child(statId);
+            var mask = (uint)(int)(mine?.Long("data") ?? 0);
+            var times = mine?.Child("AchievementTimes");
+            foreach (var (bitKey, bit) in bits.Children().OrderBy(b => long.TryParse(b.Key, out var n) ? n : long.MaxValue))
+            {
+                if (!int.TryParse(bitKey, out var b) || b is < 0 or > 31 || bit["name"] is not { } api) continue;
+                var display = bit.Child("display");
+                var got = (mask & (1u << b)) != 0;
+                list.Add(new SteamLocalAchievement(api, Lang(display?.Child("name"), language) ?? api, Lang(display?.Child("desc"), language),
+                    display?["icon"], display?["icon_gray"], display?["hidden"] is "1" or "true", got, got ? times?.Long(bitKey) ?? 0 : 0));
+            }
+        }
+        return list;
     }
 
     public static string? ScreenshotPath(string root, long steamId, long app, string file, bool thumb)

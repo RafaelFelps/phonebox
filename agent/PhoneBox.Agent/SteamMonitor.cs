@@ -264,13 +264,16 @@ public sealed class SteamMonitor(ConfigStore config, PushStore push, ILogger<Ste
                         Str(n, "feedlabel"), CleanNews(Str(n, "contents") ?? "")));
             lock (_lock) { _newsApp = na; _newsGame = NameOf(na); _news = items; }
         }
+        // achievements from the client's own files: no key, and a private profile still sees its own
+        var localAch = focus is { } la && ReadLocalAchievements(la, cfg);
 
         if (string.IsNullOrEmpty(cfg.ApiKey) || id == 0)
         {
             lock (_lock)
             {
                 _error = string.IsNullOrEmpty(cfg.ApiKey) ? null : "Steam account not found: sign in to Steam on this PC or set your SteamID in Settings › Steam";
-                _friends = []; _recent = []; _ach = null; _sales = []; _webGame = null; _state = null; _avatar = null;
+                _friends = []; _recent = []; _sales = [];
+                if (!localAch) _ach = null; _webGame = null; _state = null; _avatar = null;
             }
             return;
         }
@@ -311,7 +314,7 @@ public sealed class SteamMonitor(ConfigStore config, PushStore push, ILogger<Ste
             }
             focus = FocusApp();
             var playingNow = CurrentGame() is not null;
-            if (focus is { } aa && (now >= _nextAch || aa != _achApp))
+            if (!localAch && focus is { } aa && (now >= _nextAch || aa != _achApp))
             {
                 _nextAch = now + (playingNow ? 60_000 : 900_000);
                 await ReadAchievements(key, id, aa, cfg, ct);
@@ -397,6 +400,12 @@ public sealed class SteamMonitor(ConfigStore config, PushStore push, ILogger<Ste
             }
             else todo.Add(new(meta.Name, meta.Hidden ? null : meta.Description, meta.Gray ?? meta.Icon, 0));
         }
+        ApplyAchievements(app, done, todo, cfg);
+    }
+
+    /// <summary>Publishes a game's achievements to the widget and announces the ones unlocked since the last reading.</summary>
+    private void ApplyAchievements(long app, List<(string Api, SteamAchievement A)> done, List<SteamAchievement> todo, SteamConfig cfg)
+    {
         List<SteamAchievement> fresh = [];
         lock (_lock)
         {
@@ -411,6 +420,50 @@ public sealed class SteamMonitor(ConfigStore config, PushStore push, ILogger<Ste
             foreach (var a in fresh.Take(3)) Notify("Achievement unlocked", $"{a.Name}" + (a.Description is { Length: > 0 } d ? $" — {d}" : ""), "ok");
     }
 
+    private string? _localAchStamp;
+
+    /// <summary>
+    /// An achievement icon's address. Steam moved them to community_assets; the old steamcommunity/public/images
+    /// links (which the Web API still returns) answer 404, so a known old link is rewritten too.
+    /// </summary>
+    internal static string? IconUrl(long app, string? icon)
+    {
+        if (string.IsNullOrEmpty(icon)) return null;
+        if (icon.StartsWith("https://", StringComparison.Ordinal))
+        {
+            if (!icon.Contains("/images/apps/", StringComparison.Ordinal)) return icon;
+            icon = icon[(icon.LastIndexOf('/') + 1)..];
+        }
+        return $"https://shared.akamai.steamstatic.com/community_assets/images/apps/{app}/{icon}";
+    }
+
+    private List<SteamLocalAchievement>? LocalAchievements(long app, SteamConfig cfg)
+    {
+        string? root; long id;
+        lock (_lock) { root = _root; id = _steamId; }
+        return root is null || id == 0 ? null : SteamLocal.Achievements(root, id, app, cfg.Language);
+    }
+
+    /// <summary>The widget's achievements from appcache/stats; false when the client has none for this game.</summary>
+    private bool ReadLocalAchievements(long app, SteamConfig cfg)
+    {
+        string? root; long id;
+        lock (_lock) { root = _root; id = _steamId; }
+        if (root is null || id == 0) return false;
+        var file = new FileInfo(Path.Combine(root, "appcache", "stats", $"UserGameStats_{id - SteamLocal.SteamId64Base}_{app}.bin"));
+        if (!file.Exists) return false;
+        var stamp = $"{app}|{cfg.Language}|{file.LastWriteTimeUtc.Ticks}|{file.Length}";
+        if (stamp == _localAchStamp) return true; // nothing changed since the last reading
+        var list = SteamLocal.Achievements(root, id, app, cfg.Language);
+        if (list is null) return false;
+        _localAchStamp = stamp;
+        if (list.Count == 0) { lock (_lock) { _ach = null; _achApp = app; _achDone = null; } return true; }
+        var done = list.Where(a => a.Achieved).Select(a => (a.ApiName, new SteamAchievement(a.Name, a.Description, IconUrl(app, a.Icon), a.UnlockedAt * 1000))).ToList();
+        var todo = list.Where(a => !a.Achieved).Select(a => new SteamAchievement(a.Name, a.Hidden ? null : a.Description, IconUrl(app, a.IconGray ?? a.Icon), 0)).ToList();
+        ApplyAchievements(app, done, todo, cfg);
+        return true;
+    }
+
     /// <summary>The game's achievement names, texts and icons in the chosen language (kept for the agent's life).</summary>
     private async Task<Dictionary<string, SteamSchemaEntry>> Schema(string key, long app, SteamConfig cfg, CancellationToken ct)
     {
@@ -421,7 +474,7 @@ public sealed class SteamMonitor(ConfigStore config, PushStore push, ILogger<Ste
         if (s?.TryGetProperty("game", out var g) == true && g.TryGetProperty("availableGameStats", out var st) && st.TryGetProperty("achievements", out var achs))
             foreach (var a in achs.EnumerateArray())
                 if (Str(a, "name") is { } n)
-                    map[n] = new(Str(a, "displayName") ?? n, Str(a, "description"), Str(a, "icon"), Str(a, "icongray"),
+                    map[n] = new(Str(a, "displayName") ?? n, Str(a, "description"), IconUrl(app, Str(a, "icon")), IconUrl(app, Str(a, "icongray")),
                         a.TryGetProperty("hidden", out var hd) && hd.ValueKind == JsonValueKind.Number && hd.GetInt32() == 1);
         if (s is not null) _schema[schemaKey] = map; // a failed request is tried again next time
         return map;
@@ -469,13 +522,23 @@ public sealed class SteamMonitor(ConfigStore config, PushStore push, ILogger<Ste
         var hasKey = !string.IsNullOrEmpty(cfg.ApiKey);
         string? note = null;
         var items = new List<SteamAchievementItem>();
-        if (!hasKey) note = "Add your Steam Web API key in Settings › Steam on the PC to see achievements";
+        var local = LocalAchievements(app, cfg);
+        if (local is not null)
+        {
+            Dictionary<string, double> pct = [];
+            try { pct = await GlobalPercents(app, ct); } catch (SteamApiException) { }
+            if (local.Count == 0) note = "This game has no achievements";
+            items.AddRange(local.Select(a => new SteamAchievementItem(a.Name, a.Achieved || !a.Hidden ? a.Description : null,
+                IconUrl(app, a.Achieved ? a.Icon : a.IconGray ?? a.Icon), a.Achieved, a.UnlockedAt * 1000,
+                pct.TryGetValue(a.ApiName, out var p) ? Math.Round(p, 1) : null, a.Hidden && !a.Achieved)));
+        }
+        else if (!hasKey) note = "Open this game once on this PC: Steam then keeps its achievements here";
         else if (id == 0) note = "Steam account not found: sign in to Steam on this PC";
         else
         {
             try
             {
-                var key = Uri.EscapeDataString(cfg.ApiKey);
+                var key = Uri.EscapeDataString(cfg.ApiKey!);
                 var schema = await Schema(key, app, cfg, ct);
                 if (schema.Count == 0) note = "This game has no achievements";
                 else

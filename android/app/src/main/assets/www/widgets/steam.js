@@ -102,7 +102,7 @@ W.steam = {
           info.append(h('div', 'st-ach-head', h('span', '', '🏆 Achievements'), h('b', '', `${a.done}/${a.total}`)), bar);
           const icons = h('div', 'st-ach-icons', ...a.recent.slice(0, 6).map((x) => { const i = img(proxied(x.icon), 'st-ach-ico', x.name); i.title = x.name; return i; }));
           if (a.recent.length) info.append(icons, h('div', 'st-meta st-ach-last', `Last: ${a.recent[0].name}`));
-        } else if (!s.hasKey) info.append(h('div', 'st-meta st-hint', 'Achievements need the Steam API key (Settings › Steam)'));
+        } else if (!s.hasKey) info.append(h('div', 'st-meta st-hint', 'Achievements show once the game has been opened on this PC'));
         body.append(img(cover(app), 'st-cover', ''), info);
       } else body.append(h('div', 'empty', 'Not playing anything'));
       const parts = [head, body];

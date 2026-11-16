@@ -484,6 +484,13 @@ app.MapPost("/api/discord/{action}", async (string action, DiscordMonitor discor
         return Results.BadRequest(new { error = "Discord buttons are turned off in the widget's settings" });
     return await discord.Act(action, ct) is { } error ? Results.BadRequest(new { error }) : Results.Ok(new { ok = true });
 });
+// One person's volume (0–200 %) or local mute, as in Discord's user menu: only you hear the difference.
+app.MapPost("/api/discord/user/{id}", async (string id, int? volume, bool? mute, DiscordMonitor discord, ConfigStore cfg, CancellationToken ct) =>
+{
+    if (!cfg.Get().Widgets().Any(w => w.Type == "discord" && w.Bool("control") != false))
+        return Results.BadRequest(new { error = "Discord buttons are turned off in the widget's settings" });
+    return await discord.SetUser(id, volume, mute, ct) is { } error ? Results.BadRequest(new { error }) : Results.Ok(new { ok = true });
+});
 app.MapGet("/api/discord-avatar", async (string? u, string? h, DiscordMonitor discord, HttpContext ctx, CancellationToken ct) =>
 {
     if (u is null || h is null || await discord.Avatar(u, h, ct) is not { } bytes) return Results.NotFound();

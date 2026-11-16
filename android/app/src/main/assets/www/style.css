@@ -1161,3 +1161,14 @@ body.waking::after { opacity: 0; pointer-events: auto; transition: opacity .2s e
 .cz-g.draw .cz-res { background: rgba(148, 163, 184, .2); color: var(--muted); }
 .cz-gn { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cz-gn small, .cz-gs { color: var(--muted); font-size: 12px; white-space: nowrap; }
+/* Discord: one person's volume (tap their row) */
+.dc-row.tap { cursor: pointer; }
+.dc-row.open { background: rgba(88, 101, 242, .16); }
+.dc-pct { color: #a5b4fc; font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; align-self: center; }
+.dc-vol { display: grid; grid-template-columns: minmax(0, 1fr) 3.4em auto auto; align-items: center; gap: 10px; padding: 6px 8px 10px 43px; }
+.dc-range { width: 100%; accent-color: #5865f2; height: 28px; margin: 0; }
+.dc-vval { font-weight: 700; font-variant-numeric: tabular-nums; text-align: right; }
+.dc-vbtn { display: flex; align-items: center; gap: 6px; border: 1px solid rgba(255, 255, 255, .14); background: rgba(255, 255, 255, .06); color: var(--text); border-radius: 9px; padding: 7px 10px; font: inherit; font-size: 12.5px; font-weight: 600; white-space: nowrap; }
+.dc-vbtn svg { width: 15px; height: 15px; display: block; }
+.dc-vbtn.on { background: rgba(242, 63, 67, .18); border-color: rgba(242, 63, 67, .5); color: #fca5a5; }
+.w-discord.small .dc-vbtn span { display: none; }

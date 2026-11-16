@@ -9,8 +9,11 @@ using System.Text.RegularExpressions;
 
 namespace PhoneBox.Agent;
 
+/// <param name="Volume">How loud you hear this person on the PC: 0–200 (%), 100 is Discord's default.</param>
+/// <param name="LocalMute">Muted only for you (Discord's "Mute" in the user menu), not for the channel.</param>
+/// <param name="Me">The account PhoneBox is connected with (Discord has no volume for yourself).</param>
 public sealed record DiscordMember(string Id, string Name, string? Avatar, bool Speaking, bool Mute, bool Deaf, bool SelfMute,
-    bool SelfDeaf, bool Bot);
+    bool SelfDeaf, bool Bot, int Volume = 100, bool LocalMute = false, bool Me = false);
 
 public sealed record DiscordChannel(string Id, string Name, string? Guild);
 
@@ -40,7 +43,7 @@ public sealed partial class DiscordMonitor(ConfigStore config, ILogger<DiscordMo
     private TaskCompletionSource _wake = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     private string _status = "off";
-    private string? _message, _user, _subscribed;
+    private string? _message, _user, _userId, _subscribed;
     private DiscordChannel? _channel;
     private bool _selfMute, _selfDeaf;
     private readonly Dictionary<string, DiscordMember> _members = [];
@@ -53,7 +56,7 @@ public sealed partial class DiscordMonitor(ConfigStore config, ILogger<DiscordMo
         {
             var cfg = config.Get().Discord;
             var members = _members.Values
-                .Select(m => m with { Speaking = _speaking.Contains(m.Id) })
+                .Select(m => m with { Speaking = _speaking.Contains(m.Id), Me = m.Id == _userId })
                 .OrderBy(m => m.Bot).ThenBy(m => m.Name, StringComparer.OrdinalIgnoreCase).ToList();
             return new(cfg.Enabled, _status, _message, _user, _channel, _selfMute, _selfDeaf, members, _updated);
         }
@@ -199,7 +202,11 @@ public sealed partial class DiscordMonitor(ConfigStore config, ILogger<DiscordMo
         try
         {
             var me = await Command("AUTHENTICATE", new JsonObject { ["access_token"] = token.Access }, ct);
-            lock (_lock) _user = me.TryGetProperty("user", out var u) ? UserName(u, null) : null;
+            lock (_lock)
+            {
+                _user = me.TryGetProperty("user", out var u) ? UserName(u, null) : null;
+                _userId = me.TryGetProperty("user", out var uu) && uu.TryGetProperty("id", out var ui) ? ui.GetString() : null;
+            }
             return token;
         }
         catch (DiscordError ex)
@@ -292,8 +299,14 @@ public sealed partial class DiscordMonitor(ConfigStore config, ILogger<DiscordMo
         var nick = s.TryGetProperty("nick", out var nn) ? nn.GetString() : null;
         var avatar = u.TryGetProperty("avatar", out var a) && a.GetString() is { } hash && AvatarHash().IsMatch(hash) ? hash : null;
         _members[id] = new(id, UserName(u, nick), avatar, false, Flag("mute"), Flag("deaf"), Flag("self_mute"), Flag("self_deaf"),
-            u.TryGetProperty("bot", out var b) && b.ValueKind == JsonValueKind.True);
+            u.TryGetProperty("bot", out var b) && b.ValueKind == JsonValueKind.True, Volume(s),
+            s.TryGetProperty("mute", out var lm) && lm.ValueKind == JsonValueKind.True);
     }
+
+    /// <summary>Discord's per-user volume (0–200; older clients may send a fraction), as a whole percentage.</summary>
+    internal static int Volume(JsonElement s) =>
+        s.ValueKind == JsonValueKind.Object && s.TryGetProperty("volume", out var v) && v.ValueKind == JsonValueKind.Number
+            ? (int)Math.Clamp(Math.Round(v.GetDouble()), 0, 200) : 100;
 
     private static string UserName(JsonElement u, string? nick) =>
         !string.IsNullOrWhiteSpace(nick) ? nick
@@ -353,6 +366,38 @@ public sealed partial class DiscordMonitor(ConfigStore config, ILogger<DiscordMo
             {
                 var settings = await Command("GET_VOICE_SETTINGS", new JsonObject(), ct);
                 lock (_lock) { ApplySettings(settings); _updated = Environment.TickCount64; }
+            }
+            return null;
+        }
+        catch (Exception ex) { return ex.Message; }
+    }
+
+    /// <summary>The volume slider and local mute for one person in your voice channel (only you hear the change).</summary>
+    public async Task<string?> SetUser(string userId, int? volume, bool? mute, CancellationToken ct)
+    {
+        if (_status != "ready") return _message ?? "Discord is not connected";
+        if (!UserId().IsMatch(userId)) return "unknown user";
+        lock (_lock)
+        {
+            if (!_members.ContainsKey(userId)) return "That person is not in your voice channel";
+            if (userId == _userId) return "Discord has no volume for yourself";
+        }
+        if (volume is null && mute is null) return "nothing to change";
+        var args = new JsonObject { ["user_id"] = userId };
+        if (volume is { } v) args["volume"] = Math.Clamp(v, 0, 200);
+        if (mute is { } m) args["mute"] = m;
+        try
+        {
+            var result = await Command("SET_USER_VOICE_SETTINGS", args, ct);
+            lock (_lock)
+            {
+                if (_members.TryGetValue(userId, out var old))
+                    _members[userId] = old with
+                    {
+                        Volume = result.ValueKind == JsonValueKind.Object && result.TryGetProperty("volume", out _) ? Volume(result) : volume ?? old.Volume,
+                        LocalMute = result.ValueKind == JsonValueKind.Object && result.TryGetProperty("mute", out var rm) ? rm.ValueKind == JsonValueKind.True : mute ?? old.LocalMute,
+                    };
+                _updated = Environment.TickCount64;
             }
             return null;
         }

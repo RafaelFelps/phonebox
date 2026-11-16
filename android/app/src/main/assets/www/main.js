@@ -12,7 +12,6 @@ import './widgets/sky.js';
 import './widgets/web.js';
 import './widgets/controls.js';
 import './widgets/discord.js';
-import './widgets/chess.js';
 
 // PhoneBox desk panel. Pages are 12 × 6 grids of widgets, designed in the agent's settings page.
 // The panel talks to the PhoneBox agent through "/agent/*", which the Android shell proxies over USB
@@ -848,7 +847,7 @@ export const WIDGET_ICONS = { rules: '⚡', chargecare: '🔋', nextup: '⏭️'
   github: '🐙', processes: '⚙️', shortcuts: '🎛️', button: '🔘', worldclock: '🌍', calendar: '📅', pomodoro: '🍅', countdown: '⏳', note: '📝', command: '💻',
   push: '📡', inbox: '📬', label: '🔤', analog: '🕰️', progress: '📆', stopwatch: '⏱️', timer: '⏲️', counter: '🔢', breathe: '🫁', quote: '💬',
   checklist: '✅', battery: '🔋', topprocs: '🔥', quotaring: '🎯', volume: '🔊', sun: '🌅', air: '🍃', hackernews: '📰', exchange: '💱', crypto: '🪙', image: '🖼️', pcswitch: '🖥️',
-  controls: '🎚️', discord: '🎧', chess: '♟️' };
+  controls: '🎚️', discord: '🎧' };
 
 // ================================================================= pages
 export const pager = $('pager');

@@ -257,26 +257,6 @@
       ] }, control: true };
   }
 
-  // made-up chess games and the review of a short one (black falls for the four-move mate)
-  const chessGame = { id: 'demo4mv', site: 'lichess', url: 'https://lichess.org/', white: { name: 'Opponent', rating: 1512, accuracy: 72.4 },
-    black: { name: 'you', rating: 1488, accuracy: 41.3 }, result: '1-0', me: 'black', outcome: 'loss', speed: 'blitz', end: now() - 3600e3, opening: 'Italian Game' };
-  function chessGames() {
-    const g = (id, opp, rating, outcome, speed, hours) => ({ ...chessGame, id, white: { name: opp, rating }, black: { name: 'you', rating: 1490 }, outcome, speed, end: now() - hours * 3600e3 });
-    return { site: 'lichess', user: 'you', ratings: { bullet: 1402, blitz: 1488, rapid: 1561 },
-      games: [chessGame, g('demo2', 'kasparov_fan', 1530, 'win', 'blitz', 5), g('demo3', 'pawnstorm', 1475, 'draw', 'rapid', 26), g('demo4', 'endgame_enjoyer', 1611, 'loss', 'rapid', 50)] };
-  }
-  const ply = (san, uci, fen, ev, cls, best = null, bestSan = null, mate = null) => ({ san, uci, fen, eval: ev, mate, best, bestSan, class: cls });
-  const chessReview = { game: chessGame, startFen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1', status: 'done', progress: 1,
-    source: 'Lichess analysis', whiteAccuracy: 72.4, blackAccuracy: 41.3, error: null, moves: [
-      ply('e4', 'e2e4', 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1', 0.3, 'good'),
-      ply('e5', 'e7e5', 'rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq e6 0 2', 0.3, 'good'),
-      ply('Bc4', 'f1c4', 'rnbqkbnr/pppp1ppp/8/4p3/2B1P3/8/PPPP1PPP/RNBQK1NR b KQkq - 1 2', 0.2, 'good'),
-      ply('Nc6', 'b8c6', 'r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/8/PPPP1PPP/RNBQK1NR w KQkq - 2 3', 0.3, 'good'),
-      ply('Qh5', 'd1h5', 'r1bqkbnr/pppp1ppp/2n5/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR b KQkq - 3 3', -0.4, 'inaccuracy', 'g1f3', 'Nf3'),
-      ply('Nf6', 'g8f6', 'r1bqkb1r/pppp1ppp/2n2n2/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR w KQkq - 4 4', null, 'blunder', 'd8e7', 'Qe7', 1),
-      ply('Qxf7#', 'h5f7', 'r1bqkb1r/pppp1Qpp/2n2n2/4p3/2B1P3/8/PPPP1PPP/RNB1K1NR b KQkq - 0 4', 99, 'best'),
-    ] };
-
   // made-up calendar around the current time: one meeting is on now
   function calendar() {
     const day = new Date(new Date().toDateString()).getTime(), H = 3600e3, M = 60e3, t = now();
@@ -544,8 +524,6 @@
       else if (a === 'deafen') discordMe.deaf = !discordMe.deaf;
       return json({ ok: true });
     }
-    if (path === '/api/chess/games') return json(chessGames());
-    if (path.startsWith('/api/chess/game/')) return json({ ...chessReview, game: { ...chessGame, id: decodeURIComponent(path.slice(16)) } });
     if (path === '/api/docker') return json({ ...docker(), control: allows(await config(), (t) => t === 'docker') });
     if (path === '/api/obs') { const c = await config(); return json({ ...obsState(), enabled: c.obs?.enabled !== false, control: widgets(c).some((w) => w.type === 'obs' && w.options?.control === true) }); }
     if (path === '/api/phones') return json([

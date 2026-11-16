@@ -73,7 +73,6 @@ AddMonitor<CalendarMonitor>(builder.Services);
 AddMonitor<DockerMonitor>(builder.Services);
 AddMonitor<ObsMonitor>(builder.Services);
 AddMonitor<DiscordMonitor>(builder.Services);
-builder.Services.AddSingleton<ChessMonitor>();
 AddMonitor<BatteryMonitor>(builder.Services);
 AddMonitor<RuleEngine>(builder.Services);
 AddMonitor<ChargeGuard>(builder.Services);
@@ -502,15 +501,6 @@ app.MapPost("/api/discord-connect", (DiscordMonitor discord) => { discord.Reques
 app.MapPost("/api/discord-disconnect", (DiscordMonitor discord) => { discord.Disconnect(); return Results.Ok(); });
 app.MapGet("/api/discord-status", (DiscordMonitor discord) => Results.Json(discord.Snapshot()));
 
-// Chess (widget): recent chess.com / Lichess games and a move-by-move review of a finished one.
-app.MapGet("/api/chess/games", async (string? site, string? user, ChessMonitor chess, CancellationToken ct) =>
-    !ChessMonitor.ValidSite(site) || !ChessMonitor.ValidUser(user)
-        ? Results.BadRequest(new { error = "Set a chess.com or Lichess username in the widget's settings" })
-        : Results.Json(await chess.Games(site!, user!, ct)));
-app.MapGet("/api/chess/game/{id}", (string id, ChessMonitor chess) =>
-    chess.Review(id) is { } review ? Results.Json(review) : Results.NotFound(new { error = "Unknown game: reload the list" }));
-// Settings › General › Chess (local only)
-app.MapGet("/api/chess-engine", (ChessMonitor chess) => Results.Json(new { path = chess.Engine() }));
 
 // Battery levels of wireless devices (headphones, mice, keyboards…), for the Device batteries widget.
 app.MapGet("/api/batteries", (BatteryMonitor b) => Results.Json(new { devices = b.Snapshot() }));

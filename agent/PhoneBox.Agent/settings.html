@@ -454,15 +454,6 @@ dd { margin: 0; word-break: break-all; }
         <div class="row"><button class="btn sm" id="discordConnect">Connect</button><button class="btn sm" id="discordDisconnect">Sign out</button><span class="hint" id="discordState"></span></div>
       </div>
 
-      <div class="card">
-        <h3>Chess</h3>
-        <p class="hint" style="margin:0 0 12px">The <b>Chess review</b> widget uses Lichess's own analysis when a game has it, and otherwise Stockfish on this PC (<code>winget install Stockfish.Stockfish</code>, or set its path). It only reviews finished games.</p>
-        <div class="grid2">
-          <div class="field"><label>Stockfish (empty = find it)</label><input type="text" data-bind="chess.stockfishPath" spellcheck="false" placeholder="C:\Tools\stockfish.exe"></div>
-          <div class="field"><label>Depth (8–24; higher is slower and stronger)</label><input type="number" min="8" max="24" data-bind="chess.depth" data-type="int"></div>
-        </div>
-        <div class="row"><span class="hint" id="chessState"></span></div>
-      </div>
 
       <div class="card">
         <h3 data-i18n="s.night.title">Night mode</h3>
@@ -1656,13 +1647,7 @@ $('discordConnect').onclick = async () => {
   }
 };
 $('discordDisconnect').onclick = async () => { await fetch('/api/discord-disconnect', { method: 'POST' }); setTimeout(discordStatus, 1500); };
-async function chessStatus() {
-  try {
-    const r = await (await fetch('/api/chess-engine')).json();
-    $('chessState').textContent = r.path ? `Stockfish: ${r.path}` : 'Stockfish not found: games without Lichess analysis are shown without evaluation';
-  } catch (_) { }
-}
-discordStatus(); chessStatus();
+discordStatus();
 $('calAdd').onclick = () => {
   cfg.calendars ??= [];
   cfg.calendars.push({ name: '', url: '', color: CAL_COLORS[cfg.calendars.length % CAL_COLORS.length] });
@@ -1716,7 +1701,7 @@ const RULE_PRESETS = [
 let activeRules = [];
 
 function renderRules() {
-  cfg.rules ??= []; cfg.calendars ??= []; cfg.phones ??= []; cfg.homeAssistant ??= {}; cfg.obs ??= { enabled: false, url: 'ws://127.0.0.1:4455' }; cfg.discord ??= { enabled: false }; cfg.chess ??= { depth: 14 };
+  cfg.rules ??= []; cfg.calendars ??= []; cfg.phones ??= []; cfg.homeAssistant ??= {}; cfg.obs ??= { enabled: false, url: 'ws://127.0.0.1:4455' }; cfg.discord ??= { enabled: false };
   $('rulePresets').replaceChildren(...RULE_PRESETS.map(([label, make]) => h('button', { class: 'btn', onclick: () => {
     cfg.rules.push({ id: '', enabled: true, ...make() });
     renderRules(); changed();

@@ -32,8 +32,6 @@ public sealed class AgentConfig
     public ObsConfig Obs { get; set; } = new();
     /// <summary>Discord desktop app over its local RPC socket (Discord widget); the client secret never goes to the phone.</summary>
     public DiscordConfig Discord { get; set; } = new();
-    /// <summary>Chess widget: where Stockfish is and how deep it looks.</summary>
-    public ChessConfig Chess { get; set; } = new();
 
     /// <summary>The pages a phone shows: its own selection (Settings › Phones), or all of them.</summary>
     public IEnumerable<PageConfig> PagesFor(string? deviceId)
@@ -302,13 +300,6 @@ public sealed class DiscordConfig
     public string? RedirectUri { get; set; } = "http://localhost";
 }
 
-public sealed class ChessConfig
-{
-    /// <summary>stockfish(.exe); empty = PATH, then winget's Stockfish package.</summary>
-    public string? StockfishPath { get; set; }
-    public int Depth { get; set; } = 14;
-}
-
 public sealed class HomeAssistantConfig
 {
     public string? Url { get; set; }
@@ -513,9 +504,6 @@ public sealed partial class ConfigStore(string path)
         c.Discord.ClientId = string.IsNullOrWhiteSpace(c.Discord.ClientId) ? null : c.Discord.ClientId.Trim();
         c.Discord.ClientSecret = string.IsNullOrWhiteSpace(c.Discord.ClientSecret) ? null : c.Discord.ClientSecret.Trim();
         c.Discord.RedirectUri = string.IsNullOrWhiteSpace(c.Discord.RedirectUri) ? "http://localhost" : c.Discord.RedirectUri.Trim();
-        c.Chess ??= new();
-        c.Chess.StockfishPath = string.IsNullOrWhiteSpace(c.Chess.StockfishPath) ? null : c.Chess.StockfishPath.Trim().Trim('"');
-        c.Chess.Depth = Math.Clamp(c.Chess.Depth == 0 ? 14 : c.Chess.Depth, 8, 24);
         c.HomeAssistant ??= new();
         c.HomeAssistant.Url = string.IsNullOrWhiteSpace(c.HomeAssistant.Url) ? null : c.HomeAssistant.Url.Trim().TrimEnd('/');
         c.HomeAssistant.Token = string.IsNullOrWhiteSpace(c.HomeAssistant.Token) ? null : c.HomeAssistant.Token.Trim();

@@ -195,7 +195,7 @@ internal sealed partial class WindowsGpu : IDisposable
 
     private static string Luid(Match m) => m.Groups[1].Value.ToLowerInvariant() + "_" + m.Groups[2].Value.ToLowerInvariant();
 
-    private static List<(string Instance, double Value)> Read(IntPtr counter)
+    internal static List<(string Instance, double Value)> Read(IntPtr counter)
     {
         var list = new List<(string, double)>();
         if (counter == IntPtr.Zero) return list;
@@ -246,6 +246,33 @@ internal sealed partial class WindowsGpu : IDisposable
         CloseAdapters();
         if (_query != IntPtr.Zero) PdhCloseQuery(_query);
         _query = IntPtr.Zero;
+    }
+
+    /// <summary>The "GPU Engine" counter on its own query, for the process list (it samples on its own schedule).</summary>
+    internal sealed class ProcessGpu : IDisposable
+    {
+        private IntPtr _query, _engine;
+        private bool _primed;
+
+        public ProcessGpu()
+        {
+            if (PdhOpenQueryW(null, IntPtr.Zero, out _query) != 0) { _query = IntPtr.Zero; return; }
+            if (PdhAddEnglishCounterW(_query, @"\GPU Engine(*)\Utilization Percentage", IntPtr.Zero, out _engine) != 0) _engine = IntPtr.Zero;
+        }
+
+        /// <summary>GPU % per process since the previous call (empty on the first call: a rate needs two readings).</summary>
+        public Dictionary<int, double> Read()
+        {
+            if (_query == IntPtr.Zero || PdhCollectQueryData(_query) != 0) return [];
+            if (!_primed) { _primed = true; return []; }
+            return ProcessMonitor.GpuByPid(WindowsGpu.Read(_engine));
+        }
+
+        public void Dispose()
+        {
+            if (_query != IntPtr.Zero) PdhCloseQuery(_query);
+            _query = IntPtr.Zero;
+        }
     }
 
     // pid_1234_luid_0x00000000_0x0001C621_phys_0_eng_3_engtype_3D  /  luid_0x00000000_0x0001C621_phys_0

@@ -8,7 +8,8 @@ using System.Text;
 
 namespace PhoneBox.Agent;
 
-public sealed record ProcGroup(string Name, string Title, int Count, double Cpu, double MemMb, bool Locked, bool HasIcon);
+/// <param name="Gpu">GPU load in % as Task Manager shows it (the busiest engine the app uses); 0 where unknown.</param>
+public sealed record ProcGroup(string Name, string Title, int Count, double Cpu, double MemMb, bool Locked, bool HasIcon, double Gpu = 0);
 
 /// <param name="Session">Claude Code session name when the instance is a Claude Code session.</param>
 /// <param name="Window">Main window title, if any.</param>
@@ -23,7 +24,7 @@ public sealed record KillResult(int Killed, int Failed, string? Error);
 /// Groups processes by name and measures their CPU (%) and memory use. Sampling only runs
 /// while the phone is actually asking for the list, to avoid needless load.
 /// </summary>
-public sealed class ProcessMonitor(ILogger<ProcessMonitor> log, SessionMonitor sessions) : BackgroundService
+public sealed partial class ProcessMonitor(ILogger<ProcessMonitor> log, SessionMonitor sessions) : BackgroundService
 {
     // Processes Windows needs, or whose termination would break the user session.
 #if !WINDOWS
@@ -47,6 +48,9 @@ public sealed class ProcessMonitor(ILogger<ProcessMonitor> log, SessionMonitor s
     private readonly ConcurrentDictionary<string, byte[]?> _icons = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<int, string?> _args = new();
 
+#if WINDOWS
+    private WindowsGpu.ProcessGpu? _gpu;
+#endif
     private Dictionary<int, TimeSpan> _lastCpu = [];
     private volatile Dictionary<int, double> _pidCpu = [];
     private long _lastTs;
@@ -99,7 +103,11 @@ public sealed class ProcessMonitor(ILogger<ProcessMonitor> log, SessionMonitor s
 
         var cpuNow = new Dictionary<int, TimeSpan>();
         var pidCpu = new Dictionary<int, double>();
-        var acc = new Dictionary<string, (int Count, double Cpu, long Mem, bool Locked, int Pid)>(StringComparer.OrdinalIgnoreCase);
+        var acc = new Dictionary<string, (int Count, double Cpu, long Mem, bool Locked, int Pid, double Gpu)>(StringComparer.OrdinalIgnoreCase);
+        Dictionary<int, double> pidGpu = [];
+#if WINDOWS
+        try { pidGpu = (_gpu ??= new WindowsGpu.ProcessGpu()).Read(); } catch (Exception ex) { log.LogDebug("process GPU: {Msg}", ex.Message); }
+#endif
 
         foreach (var p in Process.GetProcesses())
         {
@@ -125,7 +133,8 @@ public sealed class ProcessMonitor(ILogger<ProcessMonitor> log, SessionMonitor s
 
                     var locked = Protected.Contains(name) || !Mine(p);
                     acc.TryGetValue(name, out var a);
-                    acc[name] = (a.Count + 1, a.Cpu + cpu, a.Mem + mem, a.Locked || locked, a.Pid == 0 ? p.Id : a.Pid);
+                    acc[name] = (a.Count + 1, a.Cpu + cpu, a.Mem + mem, a.Locked || locked, a.Pid == 0 ? p.Id : a.Pid,
+                        a.Gpu + pidGpu.GetValueOrDefault(p.Id));
                 }
                 catch { }
             }
@@ -138,12 +147,34 @@ public sealed class ProcessMonitor(ILogger<ProcessMonitor> log, SessionMonitor s
             {
                 var meta = _meta.GetOrAdd(kv.Key, _ => ReadMeta(kv.Value.Pid, kv.Key));
                 return new ProcGroup(kv.Key, meta.Title, kv.Value.Count, Math.Round(kv.Value.Cpu, 1),
-                    Math.Round(kv.Value.Mem / 1048576.0), kv.Value.Locked, meta.Path is not null);
+                    Math.Round(kv.Value.Mem / 1048576.0), kv.Value.Locked, meta.Path is not null, Math.Round(Math.Min(100, kv.Value.Gpu), 1));
             })
             .OrderByDescending(g => g.Cpu)
             .ThenByDescending(g => g.MemMb)
             .ToList();
     }
+
+    /// <summary>
+    /// GPU load per process from the "GPU Engine" counter instances (pid_1234_luid_…_phys_0_eng_3_engtype_3D):
+    /// the load of each engine a process uses, summed over its instances; the process's load is its busiest engine.
+    /// </summary>
+    internal static Dictionary<int, double> GpuByPid(IEnumerable<(string Instance, double Value)> rows)
+    {
+        var engines = new Dictionary<(int Pid, string Engine), double>();
+        foreach (var (inst, v) in rows)
+        {
+            var m = GpuInstance().Match(inst);
+            if (!m.Success || !int.TryParse(m.Groups[1].Value, out var pid) || pid == 0 || double.IsNaN(v) || v <= 0) continue;
+            var key = (pid, m.Groups[2].Value.ToLowerInvariant());
+            engines[key] = engines.GetValueOrDefault(key) + v;
+        }
+        var byPid = new Dictionary<int, double>();
+        foreach (var ((pid, _), v) in engines) byPid[pid] = Math.Max(byPid.GetValueOrDefault(pid), Math.Min(100, v));
+        return byPid;
+    }
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"^pid_(\d+)_(luid_0x[0-9a-f]+_0x[0-9a-f]+_phys_\d+_eng_\d+)", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
+    private static partial System.Text.RegularExpressions.Regex GpuInstance();
 
     /// <summary>Every instance of a process name, with what identifies each one.</summary>
     public ProcDetail Detail(string name)

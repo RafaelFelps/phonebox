@@ -679,7 +679,11 @@ app.MapGet("/api/proxy", (string? url, CancellationToken ct) => WidgetFeedProxy.
 app.MapGet("/api/procs", (ProcessMonitor procs, int? top) =>
 {
     var all = procs.Snapshot();
-    return Results.Json(new { total = all.Sum(g => g.Count), groupCount = all.Count, groups = all.Take(Math.Clamp(top ?? 40, 1, 200)) });
+    // the heaviest by CPU, by memory and by GPU, so the phone can sort by any of them
+    var n = Math.Clamp(top ?? 40, 1, 200);
+    var keep = all.Take(n).Concat(all.OrderByDescending(g => g.MemMb).Take(n)).Concat(all.Where(g => g.Gpu > 0).OrderByDescending(g => g.Gpu).Take(n))
+        .Select(g => g.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+    return Results.Json(new { total = all.Sum(g => g.Count), groupCount = all.Count, groups = all.Where(g => keep.Contains(g.Name)) });
 });
 
 app.MapGet("/api/procs/icon", (string name, ProcessMonitor procs) =>

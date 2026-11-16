@@ -995,7 +995,7 @@ export function hasProcessesPage() {
 }
 
 export function gotoProcesses(sortTarget = 'cpu') {
-  procsSort = sortTarget === 'mem' ? 'mem' : 'cpu';
+  procsSort = ['mem', 'gpu'].includes(sortTarget) ? sortTarget : 'cpu';
   let idx = resolvePage('procs');
   if (idx < 0) idx = resolvePage('processes');
   if (idx < 0) idx = pages.findIndex((p) => (p.widgets || []).some((w) => w.type === 'processes'));

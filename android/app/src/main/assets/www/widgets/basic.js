@@ -217,7 +217,7 @@ W.stat = {
     const lbl = h('div', 't-label', m.label);
     const val = h('b', null, '—'), unit = h('small'), sub = h('div', 't-sub', ' ');
     box.append(canvas, lbl, h('div', 't-val', val, unit), sub);
-    if (o.metric === 'cpu' || o.metric === 'ram') bindProcessLink(box, o.metric === 'cpu' ? 'cpu' : 'mem');
+    if (['cpu', 'ram', 'gpu'].includes(o.metric)) bindProcessLink(box, o.metric === 'ram' ? 'mem' : o.metric);
     return {
       update() {
         const s = D.state;
@@ -242,7 +242,7 @@ W.gauge = {
     const dial = h('div', 'g-dial'), pct = h('div', 'g-val'), sub = h('div', 'g-sub');
     box.append(dial, h('div', 'g-label', m.label), sub);
     dial.append(pct);
-    if (o.metric === 'cpu' || o.metric === 'ram') bindProcessLink(box, o.metric === 'cpu' ? 'cpu' : 'mem');
+    if (['cpu', 'ram', 'gpu'].includes(o.metric)) bindProcessLink(box, o.metric === 'ram' ? 'mem' : o.metric);
     let svg = null;
     return {
       update() {
@@ -663,7 +663,10 @@ W.processes = {
     const canKill = o.allowKill !== false;
     let sort = currentProcessesSort();
     const sum = h('span', 'p-sum');
-    const seg = h('div', 'seg', h('button', sort === 'cpu' ? 'on' : null, 'CPU'), h('button', sort === 'mem' ? 'on' : null, 'RAM'));
+    const SORTS = ['cpu', 'mem', 'gpu'];
+    const seg = h('div', 'seg', h('button', sort === 'cpu' ? 'on' : null, 'CPU'), h('button', sort === 'mem' ? 'on' : null, 'RAM'), h('button', sort === 'gpu' ? 'on' : null, 'GPU'));
+    // the sorted value, and the one shown small under it
+    const main = (g) => (sort === 'cpu' ? g.cpu : sort === 'gpu' ? g.gpu || 0 : g.memMb);
     const grid = h('div', 'p-grid', h('div', 'empty', t('w.procsWait')));
     box.style.setProperty('--c', '#f472b6');
     box.append(h('div', 'p-head', h('span', 's-label', 'Processes'), sum, seg), grid);
@@ -687,17 +690,18 @@ W.processes = {
       const rows = Math.max(1, Math.floor((box.clientHeight - 46) / 40));
       grid.style.gridTemplateColumns = `repeat(${cols}, minmax(0, 1fr))`;
       grid.style.gridTemplateRows = `repeat(${rows}, 1fr)`;
-      const list = [...data.groups].sort((a, b) => (sort === 'cpu' ? b.cpu - a.cpu || b.memMb - a.memMb : b.memMb - a.memMb)).slice(0, cols * rows);
-      const max = Math.max(0.1, ...list.map((g) => (sort === 'cpu' ? g.cpu : g.memMb)));
+      const list = [...data.groups].sort((a, b) => main(b) - main(a) || b.cpu - a.cpu || b.memMb - a.memMb).slice(0, cols * rows);
+      const max = Math.max(0.1, ...list.map(main));
       const pc = D.state?.pc;
       const cpuPct = pc && pc.cpu != null ? Math.round(pc.cpu) : null;
       const ramPct = pc && pc.ramTotalGb ? Math.round((pc.ramUsedGb / pc.ramTotalGb) * 100) : null;
       const ramStr = ramPct != null && pc.ramUsedGb != null && pc.ramTotalGb != null
         ? `Total RAM ${ramPct}% (${Math.round(pc.ramUsedGb)}/${Math.round(pc.ramTotalGb)} GB) · `
         : (ramPct != null ? `Total RAM ${ramPct}% · ` : '');
+      const gpuPct = pc?.gpu?.util != null ? Math.round(pc.gpu.util) : null;
       const loadPart = sort === 'cpu'
         ? (cpuPct != null ? `Total CPU ${cpuPct}% · ` : '')
-        : ramStr;
+        : sort === 'gpu' ? (gpuPct != null ? `Total GPU ${gpuPct}% · ` : '') : ramStr;
       sum.textContent = box.clientWidth > 380 ? loadPart + t('w.procsSummary', { n: data.total, apps: data.groupCount ?? data.groups.length }) : loadPart + t('w.procsSummaryShort', { n: data.total });
       if (grid.querySelector('.empty')) grid.replaceChildren();
       const keep = new Set(list.map((g) => g.name));
@@ -708,21 +712,21 @@ W.processes = {
         e.querySelector('.p-t').textContent = g.title;
         e.querySelector('.p-count').textContent = g.count > 1 ? '×' + g.count : '';
         e.querySelector('.p-lock').textContent = g.locked ? '🔒' : '';
-        e.querySelector('.p-bar i').style.width = ((sort === 'cpu' ? g.cpu : g.memMb) / max) * 100 + '%';
-        e.querySelector('.p-nums b').textContent = sort === 'cpu' ? g.cpu.toFixed(1) + '%' : fmtMem(g.memMb);
-        e.querySelector('.p-nums small').textContent = sort === 'cpu' ? fmtMem(g.memMb) : g.cpu.toFixed(1) + '%';
+        e.querySelector('.p-bar i').style.width = (main(g) / max) * 100 + '%';
+        e.querySelector('.p-nums b').textContent = sort === 'mem' ? fmtMem(g.memMb) : main(g).toFixed(1) + '%';
+        e.querySelector('.p-nums small').textContent = sort === 'cpu' ? fmtMem(g.memMb) : sort === 'gpu' ? 'CPU ' + g.cpu.toFixed(1) + '%' : g.cpu.toFixed(1) + '%';
         grid.appendChild(e); // keeps the order
       }
     };
     const setSort = (s) => {
-      sort = s === 'mem' ? 'mem' : 'cpu';
-      [...seg.children].forEach((x, i) => x.classList.toggle('on', (i === 0 ? 'cpu' : 'mem') === sort));
+      sort = SORTS.includes(s) ? s : 'cpu';
+      [...seg.children].forEach((x, i) => x.classList.toggle('on', SORTS[i] === sort));
       render();
     };
     registerProcessesSorter(setSort);
     [...seg.children].forEach((b, i) => b.addEventListener('click', () => {
       haptic();
-      setSort(i === 0 ? 'cpu' : 'mem');
+      setSort(SORTS[i]);
     }));
     return { update: render };
   },

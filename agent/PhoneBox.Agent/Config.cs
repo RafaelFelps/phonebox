@@ -170,9 +170,15 @@ public sealed class LanConfig
 
 public sealed class UpdateConfig
 {
-    /// <summary>Install new GitHub releases automatically (phone app over USB, agent in place).</summary>
-    public bool Auto { get; set; } = true;
-    public string Repo { get; set; } = "ersinkoc/phonebox";
+    /// <summary>
+    /// Install new GitHub releases automatically (phone app over USB, agent in place). Off by default in this fork:
+    /// a config the agent cannot read at boot falls back to these defaults, and the original's releases would
+    /// replace the fork's changes.
+    /// </summary>
+    public bool Auto { get; set; }
+    /// <summary>Where releases come from: this fork, never the original unless set on purpose.</summary>
+    public string Repo { get; set; } = ForkRepo;
+    public const string ForkRepo = "RafaelFelps/phonebox";
 }
 
 public sealed class ClaudeConfig
@@ -487,7 +493,7 @@ public sealed partial class ConfigStore(string path)
         if (c.Ping.Host.Length > 253 || c.Ping.Host.Any(ch => ch <= ' ' || ch > '~')) c.Ping.Host = PingMonitor.DefaultHost;
         c.Claude ??= new();
         c.Claude.TimeoutSec = Math.Clamp(c.Claude.TimeoutSec, 10, 3600);
-        if (string.IsNullOrWhiteSpace(c.Updates.Repo)) c.Updates.Repo = "ersinkoc/phonebox";
+        if (string.IsNullOrWhiteSpace(c.Updates.Repo)) c.Updates.Repo = UpdateConfig.ForkRepo;
         c.Lan.Port = Math.Clamp(c.Lan.Port, 1024, 65535);
         if (string.IsNullOrWhiteSpace(c.Lan.Token)) c.Lan.Token = NewToken();
         if (string.IsNullOrWhiteSpace(c.Lan.WebhookToken)) c.Lan.WebhookToken = NewToken();

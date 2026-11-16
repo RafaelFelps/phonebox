@@ -74,6 +74,7 @@ AddMonitor<CalendarMonitor>(builder.Services);
 AddMonitor<DockerMonitor>(builder.Services);
 AddMonitor<ObsMonitor>(builder.Services);
 AddMonitor<DiscordMonitor>(builder.Services);
+AddMonitor<DiscordHubMonitor>(builder.Services);
 AddMonitor<SteamMonitor>(builder.Services);
 AddMonitor<BatteryMonitor>(builder.Services);
 AddMonitor<RuleEngine>(builder.Services);
@@ -492,12 +493,24 @@ app.MapPost("/api/discord/user/{id}", async (string id, int? volume, bool? mute,
         return Results.BadRequest(new { error = "Discord buttons are turned off in the widget's settings" });
     return await discord.SetUser(id, volume, mute, ct) is { } error ? Results.BadRequest(new { error }) : Results.Ok(new { ok = true });
 });
-app.MapGet("/api/discord-avatar", async (string? u, string? h, DiscordMonitor discord, HttpContext ctx, CancellationToken ct) =>
+app.MapGet("/api/discord-avatar", async (string? u, string? h, string? k, DiscordMonitor discord, DiscordHubMonitor hub, HttpContext ctx, CancellationToken ct) =>
 {
-    if (u is null || h is null || await discord.Avatar(u, h, ct) is not { } bytes) return Results.NotFound();
+    if (u is null || h is null) return Results.NotFound();
+    // k=guild|user: a server icon or member avatar of the "discord-hub" widget (same path, so the phone app lets it through)
+    var bytes = k is null ? await discord.Avatar(u, h, ct) : (await hub.ImageAsync(k, u, h, ct))?.Data;
+    if (bytes is null) return Results.NotFound();
     ctx.Response.Headers.CacheControl = "private, max-age=21600";
     return Results.Bytes(bytes, "image/png");
 });
+// Upstream's Discord widget (type "discord-hub"): servers and their voice channels to join, notifications, mute / deafen / leave.
+app.MapGet("/api/discord/hub", (DiscordHubMonitor hub, ConfigStore cfg) => Results.Json(new
+{
+    enabled = cfg.Get().Discord.Enabled,
+    snapshot = hub.Snapshot(),
+    control = DiscordHubMonitor.ControlAllowed(cfg.Get()),
+}));
+app.MapPost("/api/discord/hub/{action}", async (string action, string? channel, DiscordHubMonitor hub) =>
+    await hub.ActAsync(action, channel) is { } error ? Results.BadRequest(new { error }) : Results.Ok(new { ok = true }));
 // Steam (widgets): the client's games, downloads and screenshots, and with an API key friends, achievements, news and
 // wishlist sales. Covers, avatars and achievement icons come through the agent (Steam's image hosts only).
 static bool SteamOn(ConfigStore cfg) => SteamMonitor.WidgetOn(cfg.Get());

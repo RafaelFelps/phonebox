@@ -194,6 +194,59 @@ public sealed class SpotifyControl : IDisposable
         catch (Exception ex) when (ex is IOException or HttpRequestException or JsonException or OperationCanceledException)
         { return new(false, ex is IOException ? ex.Message : "Spotify is unavailable"); }
     }
+    // ---- Spotify's own volume (the slider inside Spotify), for the media widget while Spotify plays ----
+    private int? _volume;            // last known volume_percent of the active device; null = unknown / no control
+    private int _volumeBeforeMute = 50;
+    private long _volumeAt, _volumePinnedUntil;
+    private int _volumeRefreshing;
+
+    /// <summary>
+    /// The active device's volume, refreshed in the background every few seconds; never waits for Spotify (the panel
+    /// asks every second). Null when Spotify is not connected, nothing is active or the device has no volume control.
+    /// </summary>
+    public int? Volume()
+    {
+        if (Now - Volatile.Read(ref _volumeAt) >= 3000 && Now >= Volatile.Read(ref _volumePinnedUntil)
+            && Interlocked.CompareExchange(ref _volumeRefreshing, 1, 0) == 0)
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    var player = await Request(HttpMethod.Get, "me/player", null, CancellationToken.None);
+                    var device = player?["device"];
+                    // a set from the phone that landed while this read was under way wins over it
+                    if (Now >= Volatile.Read(ref _volumePinnedUntil))
+                        _volume = device?["supports_volume"]?.GetValue<bool>() == false ? null : device?["volume_percent"]?.GetValue<int>();
+                }
+                catch { _volume = null; }
+                finally { Volatile.Write(ref _volumeAt, Now); Volatile.Write(ref _volumeRefreshing, 0); }
+            });
+        return _volume;
+    }
+
+    /// <summary>Sets the active device's volume (Spotify Premium). Returns the new volume, or null when Spotify refused.</summary>
+    public async Task<int?> SetVolume(int level, CancellationToken ct)
+    {
+        level = Math.Clamp(level, 0, 100);
+        try
+        {
+            var device = DeviceQuery();
+            await Request(HttpMethod.Put, "me/player/volume?volume_percent=" + level + (device.Length > 0 ? "&" + device[1..] : ""), null, ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch (Exception ex) when (ex is IOException or HttpRequestException or JsonException or OperationCanceledException) { return null; }
+        if (level > 0) _volumeBeforeMute = level;
+        _volume = level;
+        // Spotify reports the old value for a moment after a change: keep ours until it has caught up
+        Volatile.Write(ref _volumePinnedUntil, Now + 4000);
+        return level;
+    }
+
+    /// <summary>Spotify has no mute of its own: 0 %, and back to the volume from before.</summary>
+    public Task<int?> ToggleMute(CancellationToken ct) => _volume is > 0 or null
+        ? SetVolume(0, ct)
+        : SetVolume(Math.Max(5, _volumeBeforeMute), ct);
+
     private string DeviceQuery() => _config.Get().Controls.SpotifyDevice is { Length: > 0 } id ? "?device_id=" + Uri.EscapeDataString(id) : "";
     public void Dispose() { _http.Dispose(); _tokenGate.Dispose(); _readGate.Dispose(); }
 }

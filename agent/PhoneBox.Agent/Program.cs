@@ -437,8 +437,11 @@ object State(IServiceProvider sp, long? ev)
         pc = sp.GetRequiredService<SystemMonitor>().Snapshot(),
         media = stateMedia,
         audio = sp.GetRequiredService<AudioControl>().Snapshot(),
-        // the playing app's own volume (Spotify), which the media widget's slider controls instead of the computer's
-        appAudio = AppVolumeApps.Process(stateMedia?.App) is not null ? sp.GetRequiredService<AppVolume>().Snapshot(stateMedia!.App) : null,
+        // the playing app's own volume (Spotify), which the media widget's slider controls instead of the computer's:
+        // Spotify's own slider through its Web API when connected, otherwise Spotify's volume in the Windows mixer
+        appAudio = AppVolumeApps.Process(stateMedia?.App) is null ? null
+            : stateMedia!.App == "Spotify" && sp.GetRequiredService<SpotifyControl>().Volume() is { } sv ? new AppAudioSnapshot("Spotify", sv, sv == 0)
+            : sp.GetRequiredService<AppVolume>().Snapshot(stateMedia.App),
         ping = sp.GetRequiredService<PingMonitor>().Snapshot(),
         rules = sp.GetRequiredService<RuleEngine>().Active(),
         rulesPaused = sp.GetRequiredService<RuleEngine>().PausedUntil(),
@@ -701,12 +704,25 @@ app.MapPost("/api/media/{action}", async (string action, long? ms, MediaMonitor 
     return outcome.Ok ? Results.Json(new { ok = true, media = outcome.Media }) : Results.BadRequest();
 });
 
-app.MapPost("/api/volume", (int? level, string? op, string? app, AudioControl audio, AppVolume apps) =>
+app.MapPost("/api/volume", async (int? level, string? op, string? app, AudioControl audio, AppVolume apps, SpotifyControl spotify, CancellationToken ct) =>
 {
-    // app=Spotify: that app's own volume in the Windows mixer (the media widget while Spotify plays)
+    // app=Spotify: that app's own volume (the media widget while Spotify plays)
     if (app is not null)
     {
         if (AppVolumeApps.Process(app) is null) return Results.BadRequest();
+        // Spotify's own slider (moves in the app on the PC too) when its Web API is connected and allows it
+        if (app == "Spotify" && spotify.Volume() is { } cur)
+        {
+            var set = op switch
+            {
+                "mute" => await spotify.ToggleMute(ct),
+                "up" => await spotify.SetVolume(cur + 5, ct),
+                "down" => await spotify.SetVolume(cur - 5, ct),
+                _ when level is { } l => await spotify.SetVolume(l, ct),
+                _ => null,
+            };
+            if (set is { } v) return Results.Json(new AppAudioSnapshot("Spotify", v, v == 0));
+        }
         var a = op switch
         {
             "mute" => apps.ToggleMute(app),

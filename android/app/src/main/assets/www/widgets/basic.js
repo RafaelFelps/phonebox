@@ -144,7 +144,8 @@ W.media = {
       setVolDragging(true);
       paintVol(vol.value);
       clearTimeout(volTimer);
-      volTimer = setTimeout(() => api('/volume?level=' + vol.value + volQuery(), 'POST').catch(() => {}), 120);
+      // Spotify's volume goes through its Web API: fewer, later requests while dragging
+      volTimer = setTimeout(() => api('/volume?level=' + vol.value + volQuery(), 'POST').catch(() => {}), appVol() ? 300 : 120);
     });
     vol.addEventListener('change', () => setTimeout(() => setVolDragging(false), 600));
     q('.mute').addEventListener('click', async () => {

@@ -284,6 +284,10 @@ body.night #navCard, body.night #navChip { display: none; }
 .muted-on .i-mute { display: block; color: var(--err); }
 .vol { flex: 1; display: flex; align-items: center; gap: 4px; margin-left: 4px; min-width: 0; }
 .vol-val { font-size: 11px; color: var(--muted); width: 22px; text-align: right; }
+/* the slider is Spotify's own volume (not the computer's): Spotify green */
+.app-vol .volr::-webkit-slider-runnable-track { background: linear-gradient(to right, #1db954 var(--p, 50%), rgba(255, 255, 255, .14) var(--p, 50%)); }
+.app-vol .volr::-webkit-slider-thumb { background: #1db954; }
+.app-vol .vol-val { color: #1db954; }
 .volume-unavailable .volr, .w-volume.unavailable .vb { opacity: .35; pointer-events: none; }
 .w-volume.unavailable .vb-v { color: var(--muted); }
 input[type=range] { -webkit-appearance: none; appearance: none; flex: 1; min-width: 0; height: 28px; background: transparent; }

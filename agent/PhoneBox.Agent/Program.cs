@@ -50,6 +50,7 @@ builder.Services.ConfigureHttpJsonOptions(o => o.SerializerOptions.PropertyNamin
 builder.Services.AddSingleton(configStore);
 builder.Services.AddSingleton(endpoint);
 builder.Services.AddSingleton<AudioControl>();
+builder.Services.AddSingleton<AppVolume>();
 builder.Services.AddSingleton<AppCatalog>();
 builder.Services.AddSingleton<PairingCodes>();
 builder.Services.AddSingleton<SpotifyControl>();
@@ -423,6 +424,7 @@ object State(IServiceProvider sp, long? ev)
 {
     var upd = sp.GetRequiredService<UpdateService>();
     var push = sp.GetRequiredService<PushStore>();
+    var stateMedia = sp.GetRequiredService<ControlDeck>().EffectiveMedia(sp.GetRequiredService<MediaMonitor>().Snapshot());
     return new
     {
         update = upd.Status() is { } u && (u.AppUpdate || u.AgentUpdate) ? new { latest = u.Latest, app = u.AppUpdate, agent = u.AgentUpdate } : null,
@@ -433,8 +435,10 @@ object State(IServiceProvider sp, long? ev)
         evSeq = push.Seq,
         events = ev is { } since ? push.Since(since) : [],
         pc = sp.GetRequiredService<SystemMonitor>().Snapshot(),
-        media = sp.GetRequiredService<ControlDeck>().EffectiveMedia(sp.GetRequiredService<MediaMonitor>().Snapshot()),
+        media = stateMedia,
         audio = sp.GetRequiredService<AudioControl>().Snapshot(),
+        // the playing app's own volume (Spotify), which the media widget's slider controls instead of the computer's
+        appAudio = AppVolumeApps.Process(stateMedia?.App) is not null ? sp.GetRequiredService<AppVolume>().Snapshot(stateMedia!.App) : null,
         ping = sp.GetRequiredService<PingMonitor>().Snapshot(),
         rules = sp.GetRequiredService<RuleEngine>().Active(),
         rulesPaused = sp.GetRequiredService<RuleEngine>().PausedUntil(),
@@ -697,8 +701,22 @@ app.MapPost("/api/media/{action}", async (string action, long? ms, MediaMonitor 
     return outcome.Ok ? Results.Json(new { ok = true, media = outcome.Media }) : Results.BadRequest();
 });
 
-app.MapPost("/api/volume", (int? level, string? op, AudioControl audio) =>
+app.MapPost("/api/volume", (int? level, string? op, string? app, AudioControl audio, AppVolume apps) =>
 {
+    // app=Spotify: that app's own volume in the Windows mixer (the media widget while Spotify plays)
+    if (app is not null)
+    {
+        if (AppVolumeApps.Process(app) is null) return Results.BadRequest();
+        var a = op switch
+        {
+            "mute" => apps.ToggleMute(app),
+            "up" => apps.Step(app, +5),
+            "down" => apps.Step(app, -5),
+            _ when level is { } l => apps.SetVolume(app, l),
+            _ => null,
+        };
+        return a is null ? Results.BadRequest() : Results.Json(a);
+    }
     var ok = op switch
     {
         "mute" => audio.ToggleMute(),

@@ -137,17 +137,25 @@ W.media = {
       try { await api('/media/seek?ms=' + ms, 'POST'); } catch (_) {}
     });
     const paintVol = (v) => { vol.style.setProperty('--p', v + '%'); q('.vol-val').textContent = v; };
+    // While Spotify plays, the slider and mute act on Spotify's own volume (Windows mixer), not the computer's.
+    const appVol = () => D.state?.appAudio || null;
+    const volQuery = () => (appVol() ? '&app=' + encodeURIComponent(appVol().app) : '');
     vol.addEventListener('input', () => {
       setVolDragging(true);
       paintVol(vol.value);
       clearTimeout(volTimer);
-      volTimer = setTimeout(() => api('/volume?level=' + vol.value, 'POST').catch(() => {}), 120);
+      volTimer = setTimeout(() => api('/volume?level=' + vol.value + volQuery(), 'POST').catch(() => {}), 120);
     });
     vol.addEventListener('change', () => setTimeout(() => setVolDragging(false), 600));
     q('.mute').addEventListener('click', async () => {
       haptic();
-      if ((!D.state?.audio || D.state.audio.canControl === false)) return;
-      try { const a = await api('/volume?op=mute', 'POST'); D.state.audio = a; emit('state'); } catch (_) {}
+      const own = appVol();
+      if (!own && (!D.state?.audio || D.state.audio.canControl === false)) return;
+      try {
+        const a = await api('/volume?op=mute' + volQuery(), 'POST');
+        if (own) D.state.appAudio = a; else D.state.audio = a;
+        emit('state');
+      } catch (_) {}
     });
 
     return {
@@ -165,7 +173,9 @@ W.media = {
           }
           return;
         }
-        const m = D.state?.media, a = D.state?.audio;
+        const m = D.state?.media, a = appVol() || D.state?.audio;
+        box.classList.toggle('app-vol', !!appVol());
+        q('.vol').title = appVol() ? appVol().app + ' volume' : 'Computer volume';
         vol.disabled = (!a || a.canControl === false);
         box.classList.toggle('volume-unavailable', (!a || a.canControl === false));
         q('.mute').disabled = (!a || a.canControl === false);

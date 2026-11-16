@@ -39,7 +39,7 @@
   </ItemGroup>
 
   <ItemGroup Condition="!$(TargetFramework.Contains('-windows'))">
-    <Compile Remove="Tray.cs;JobObject.cs;AudioControl.cs;MediaMonitor.cs" />
+    <Compile Remove="Tray.cs;JobObject.cs;AudioControl.cs;AppVolume.cs;MediaMonitor.cs" />
   </ItemGroup>
 
   <ItemGroup>

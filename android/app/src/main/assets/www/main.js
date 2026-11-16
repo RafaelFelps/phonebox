@@ -386,10 +386,10 @@ export function wxLines() {
 
 export function wxBlock() {
   const e = h('div', 'wx', h('span', 'wx-icon', '·'), h('span', 'wx-temp', '--°'),
-    h('div', 'wx-meta', h('span', 'wx-desc', 'Loading weather…'), h('span', 'wx-range muted')));
+    h('div', 'wx-meta', h('span', 'wx-desc', t('w.loading')), h('span', 'wx-range muted')));
   e.update = () => {
     const l = wxLines();
-    if (!l) { e.querySelector('.wx-desc').textContent = D.weather === null ? 'Loading weather…' : 'Weather unavailable'; return; }
+    if (!l) { e.querySelector('.wx-desc').textContent = D.weather === null ? t('w.loading') : t('w.weatherUnavailable'); return; }
     e.querySelector('.wx-icon').textContent = l.icon;
     e.querySelector('.wx-temp').textContent = l.temp;
     e.querySelector('.wx-desc').textContent = l.desc;
@@ -638,7 +638,7 @@ export function openSheet(g, canKill) {
   sheet = { group: g, detail: null, canKill };
   fillIcon($('psIco'), g);
   $('psTitle').textContent = g.title;
-  $('psSub').textContent = 'Loading…';
+  $('psSub').textContent = t('w.loading');
   $('psList').replaceChildren();
   $('pSheet').hidden = false;
   loadSheet();
@@ -879,7 +879,8 @@ export function buildLayout() {
   const next = enabled.length ? enabled : FALLBACK_PAGES;
   const portrait = isPortrait();
   const h12 = hour12();
-  const key = JSON.stringify([next, cfg.shortcuts, cfg.display?.showSeconds, cfg.display?.hour12, h12, cfg.display?.appearance, portrait]);
+  // the active language belongs in the key: the widgets render their texts once, when they are created
+  const key = JSON.stringify([next, cfg.shortcuts, cfg.display?.showSeconds, cfg.display?.hour12, h12, cfg.display?.appearance, portrait, I18n?.getLang()]);
   if (key === layoutKey) return;
   layoutKey = key;
   lastHour12 = h12;

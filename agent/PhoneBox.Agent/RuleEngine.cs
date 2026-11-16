@@ -1,4 +1,7 @@
 using System.Diagnostics;
+#if WINDOWS
+using System.Runtime.InteropServices;
+#endif
 using System.Text.Json;
 
 namespace PhoneBox.Agent;
@@ -199,6 +202,12 @@ public sealed class RuleEngine(ConfigStore config, PushStore push, SessionMonito
                     .FirstOrDefault(n => procs.Contains(n) || procs.Any(p => p.Length >= 15 && n.StartsWith(p, StringComparison.OrdinalIgnoreCase)));
                 return hit is null ? (false, "") : (true, hit);
             }
+            case "app-in-front":
+            {
+                var front = FrontApp();
+                var hit = front is not null && names.Any(n => front.Contains(n, StringComparison.OrdinalIgnoreCase));
+                return hit ? (true, front!) : (false, "");
+            }
             case "mic-in-use":
             case "camera-in-use":
             {
@@ -343,4 +352,45 @@ public sealed class RuleEngine(ConfigStore config, PushStore push, SessionMonito
         _idleAt = Environment.TickCount64;
         return _idle = Idle.Seconds();
     }
+
+    /// <summary>For tests: a fake front-app reader instead of the OS probes.</summary>
+    internal Func<string?>? FrontProbe;
+
+    private string? _front;
+    private long _frontAt;
+
+    /// <summary>The name of the app that owns the foreground window, or null when it cannot be told.</summary>
+    private string? FrontApp()
+    {
+        if (FrontProbe is not null) return FrontProbe();
+        if (_frontAt != 0 && Environment.TickCount64 - _frontAt < 1500) return _front;
+        // timed from the end of the probe: osascript or xdotool can take up to 2 s, and every app-in-front rule in
+        // the same pass must reuse that answer instead of starting its own probe
+        _front = FrontAppOs();
+        _frontAt = Environment.TickCount64;
+        return _front;
+    }
+
+#if WINDOWS
+    private static string? FrontAppOs()
+    {
+        var hwnd = GetForegroundWindow();
+        if (hwnd == 0 || GetWindowThreadProcessId(hwnd, out var pid) == 0) return null;
+        try { using var p = Process.GetProcessById((int)pid); return p.ProcessName; } catch { return null; }
+    }
+
+    [DllImport("user32.dll")] private static extern nint GetForegroundWindow();
+    [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(nint hwnd, out uint processId);
+#else
+    private static string? FrontAppOs()
+    {
+        // macOS: System Events, same Accessibility permission as sending keys. Linux: xdotool on X11 only;
+        // under Wayland there is no desktop-wide frontmost-app query, so the rule simply stays off.
+        if (OperatingSystem.IsMacOS())
+            return Sh.Run("osascript", "-e", "tell application \"System Events\" to get name of first process whose frontmost is true")?.Trim() is { Length: > 0 } app ? app : null;
+        if (Environment.GetEnvironmentVariable("WAYLAND_DISPLAY") is null)
+            return Sh.Run("xdotool", "getactivewindow", "getwindowclassname")?.Trim() is { Length: > 0 } cls ? cls : null;
+        return null;
+    }
+#endif
 }

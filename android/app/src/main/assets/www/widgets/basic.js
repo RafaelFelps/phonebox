@@ -63,7 +63,7 @@ W.forecast = {
     return {
       update() {
         const w = D.weather;
-        if (!w?.hourly || !w?.daily) { row.replaceChildren(h('div', 'empty', D.weather === null ? 'Loading…' : 'Weather unavailable')); return; }
+        if (!w?.hourly || !w?.daily) { row.replaceChildren(h('div', 'empty', D.weather === null ? t('w.loading') : t('w.weatherUnavailable'))); return; }
         box.querySelector('.w-sub').textContent = cfg.weather?.city || '';
         const vertical = box.clientHeight > box.clientWidth * 0.9;
         const room = vertical ? box.clientHeight - 30 : box.clientWidth - 16;
@@ -921,10 +921,10 @@ W.pomodoro = {
     };
     const label = () => {
       const s = plan[st.step];
-      if (s.kind === 'long') return 'Long break';
-      if (s.kind === 'break') return 'Break';
+      if (s.kind === 'long') return t('w.longBreak');
+      if (s.kind === 'break') return t('w.break');
       const n = plan.slice(0, st.step + 1).filter((x) => x.kind === 'focus').length;
-      return focusTotal > 1 ? `Focus ${n}/${focusTotal}` : 'Focus';
+      return focusTotal > 1 ? `${t('w.focus')} ${n}/${focusTotal}` : t('w.focus');
     };
     const render = () => {
       // "today" starts over at midnight also while the panel stays open

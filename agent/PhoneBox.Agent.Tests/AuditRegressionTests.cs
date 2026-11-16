@@ -109,6 +109,23 @@ public sealed class AuditRegressionTests : IDisposable
         Assert.False(push.Snapshot().ContainsKey("onair"));
     }
 
+    [Fact]
+    public void AnAppInFrontRuleFollowsTheForegroundApp()
+    {
+        var (engine, push, write) = Rules();
+        write("""{"id":"focus","name":"Focus","when":"app-in-front","match":"code","then":"goto","page":"work","whileActive":true}""");
+        engine.FrontProbe = () => "Visual Studio Code";
+        engine.Evaluate();
+        Assert.Contains(push.Since(0), e => e.Kind == "goto");
+        Assert.Contains("focus", engine.Active());
+        engine.FrontProbe = () => "Safari";
+        engine.Evaluate();
+        Thread.Sleep(RuleEngine.ReleaseSec * 1000 + 300);
+        engine.Evaluate();
+        Assert.Contains(push.Since(0), e => e.Kind == "back");
+        Assert.DoesNotContain("focus", engine.Active());
+    }
+
     [Theory]
     [InlineData("on", true)]
     [InlineData("off", false)]

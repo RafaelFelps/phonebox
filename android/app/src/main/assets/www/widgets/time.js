@@ -142,7 +142,7 @@ W.breathe = {
     const PATTERNS = { box: [['Inhale', 4], ['Hold', 4], ['Exhale', 4], ['Hold', 4]], relax: [['Inhale', 4], ['Hold', 7], ['Exhale', 8]], calm: [['Inhale', 5], ['Exhale', 5]] };
     const phases = PATTERNS[o.pattern] || PATTERNS.box;
     const cycle = phases.reduce((a, p) => a + p[1], 0);
-    const ball = h('div', 'br-ball'), word = h('div', 'br-w', 'Tap to start'), count = h('div', 'br-c');
+    const ball = h('div', 'br-ball'), word = h('div', 'br-w', t('w.tapToStart')), count = h('div', 'br-c');
     box.append(h('div', 'br-stage', ball, h('div', 'br-txt', word, count)));
     let start = null, lastPhase = -1;
     box.addEventListener('click', () => { haptic(); start = start ? null : Date.now(); lastPhase = -1; if (!start) { ball.style.transition = 'transform 1s ease'; ball.style.transform = 'scale(.45)'; word.textContent = t('w.tapToStart'); count.textContent = ''; } });

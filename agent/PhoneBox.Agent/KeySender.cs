@@ -85,17 +85,23 @@ public static class KeySender
         }
     }
 
+    /// <summary>
+    /// The Windows virtual-key code for a normalized key name. Modifiers are the left-hand keys (VK_LSHIFT, not the
+    /// generic VK_SHIFT): apps that read raw input, Discord among them, could not tell which Shift went down (#98).
+    /// </summary>
+    internal static byte WinVk(string k) => k switch
+    {
+        "ctrl" => 0xA2, "shift" => 0xA0, "alt" => 0xA4, "win" => 0x5B,
+        "lshift" => 0xA0, "rshift" => 0xA1, "lctrl" => 0xA2, "rctrl" => 0xA3, "lalt" => 0xA4, "ralt" => 0xA5,
+        _ when Special.TryGetValue(k, out var s) => s.Vk,
+        _ when k[0] == 'f' && k.Length > 1 => (byte)(0x70 + int.Parse(k[1..]) - 1),
+        _ => (byte)char.ToUpperInvariant(k[0]),
+    };
+
 #if WINDOWS
     private static void Send(List<string> combo)
     {
-        var vks = combo.Select(k => k switch
-        {
-            "ctrl" => (byte)0x11, "shift" => (byte)0x10, "alt" => (byte)0x12, "win" => (byte)0x5B,
-            "lshift" => (byte)0xA0, "rshift" => (byte)0xA1, "lctrl" => (byte)0xA2, "rctrl" => (byte)0xA3, "lalt" => (byte)0xA4, "ralt" => (byte)0xA5,
-            _ when Special.TryGetValue(k, out var s) => s.Vk,
-            _ when k[0] == 'f' && k.Length > 1 => (byte)(0x70 + int.Parse(k[1..]) - 1),
-            _ => (byte)char.ToUpperInvariant(k[0]),
-        }).ToList();
+        var vks = combo.Select(WinVk).ToList();
         var inputs = new List<INPUT>();
         foreach (var vk in vks) inputs.Add(Key(vk, false));
         foreach (var vk in Enumerable.Reverse(vks)) inputs.Add(Key(vk, true));
@@ -117,15 +123,19 @@ public static class KeySender
     // arrows, Home/End, Insert/Delete, PageUp/PageDown and the right-hand keys need the "extended" flag
     private static bool Extended(byte vk) => vk is >= 0x21 and <= 0x2E or 0x5B or 0xA3 or 0xA5;
 
-    // the hardware scan code as well as the virtual key: shortcut listeners that read scan codes (Discord's
-    // keybinds) then see the same key a real press gives, including which Shift / Ctrl / Alt it was
-    private static INPUT Key(byte vk, bool up) => new()
+    private static INPUT Key(byte vk, bool up)
     {
-        type = 1,
-        u = new InputUnion { ki = new KEYBDINPUT { wVk = vk, wScan = (ushort)MapVirtualKeyW(vk, 0), dwFlags = (up ? 2u : 0u) | (Extended(vk) ? 1u : 0u) } },
-    };
-
-    [DllImport("user32.dll")] private static extern uint MapVirtualKeyW(uint code, uint mapType);
+        // the scan code too: raw-input apps tell keys apart (and left from right) by it, and 0 is no key at all.
+        // MAPVK_VK_TO_VSC_EX marks the media keys with E0; the arrows and the Home/End block share their codes with
+        // the keypad, so they still come from the list above.
+        var sc = MapVirtualKeyW(vk, 4);
+        var extended = Extended(vk) || (sc >> 8) is 0xE0 or 0xE1;
+        return new()
+        {
+            type = 1,
+            u = new InputUnion { ki = new KEYBDINPUT { wVk = vk, wScan = (ushort)(sc & 0xFF), dwFlags = (up ? 2u : 0u) | (extended ? 1u : 0u) } },
+        };
+    }
 
     private static INPUT Unicode(char ch, bool up) => new()
     {
@@ -133,6 +143,7 @@ public static class KeySender
         u = new InputUnion { ki = new KEYBDINPUT { wScan = ch, dwFlags = 4u /* UNICODE */ | (up ? 2u : 0u) } },
     };
 
+    [DllImport("user32.dll")] private static extern uint MapVirtualKeyW(uint code, uint mapType);
     [DllImport("user32.dll", SetLastError = true)] private static extern uint SendInput(uint count, INPUT[] inputs, int size);
     [StructLayout(LayoutKind.Sequential)] private struct INPUT { public uint type; public InputUnion u; }
     [StructLayout(LayoutKind.Explicit)] private struct InputUnion { [FieldOffset(0)] public MOUSEINPUT mi; [FieldOffset(0)] public KEYBDINPUT ki; }

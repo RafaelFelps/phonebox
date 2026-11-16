@@ -3,8 +3,71 @@
 ## Unreleased
 
 **Agent**
+- A calendar feed with a recurring event whose `INTERVAL` is huge keeps its other events. Before, such a rule could
+  run past the year 9999 and the whole feed failed, showing only its last good copy (#106,
+  [Seyamalam](https://github.com/Seyamalam)).
+- On a WorkBuddy permission request, the card shows the name WorkBuddy gave the workspace instead of its timestamp
+  folder name (#111, [4gui](https://github.com/4gui)). The guide explains how to add the hook to WorkBuddy.
+
+## 0.9.12 — 2026-11-16
+
+Pages can follow the app in front, the AI quotas load on networks with broken IPv6, and the Claude quota check asks
+Anthropic less often and shows fewer errors.
+
+**Agent**
+- A new rule condition, "an app is in front", holds while a named app owns the foreground window (for example
+  `Code|obs64|Safari`). With "show the page" and "while active", the phone shows the page for the app you are using
+  and goes back when you switch away (#103, #104, [Seyamalam](https://github.com/Seyamalam)). It works on Windows, on
+  macOS with the Accessibility permission, and on Linux under X11 with `xdotool`; Wayland has no way to ask which app
+  is in front.
+- The AI quotas load on networks that announce IPv6 but don't route it. The quota requests try the IPv4 addresses
+  first, then the others, within one 10-second connect budget. Before, the Claude quota failed with "Socket is not
+  connected" (#105, [sateesh2020](https://github.com/sateesh2020)).
+- The Claude quota check spends fewer of Anthropic's rate-limited requests and shows fewer errors:
+  - a restart (an update) or a second agent on the computer uses a reading under 3 minutes old, and still waits
+    out a `429`'s Retry-After, instead of asking again;
+  - an expired token is not sent, and a token Anthropic refused (`401`) is tried again only after 30 minutes; the
+    token Claude Code renews is used within a minute, instead of after a back-off of up to 15 minutes;
+  - when the network isn't back yet (after sleep), the last reading stays without an error and the check is
+    retried after 30 seconds, up to three times;
+  - a reply PhoneBox doesn't recognize (a captive portal, a changed format) keeps the last reading instead of
+    emptying the card.
+- The Codex quota skips a reading cut off mid-write for the complete one before it, instead of showing a JSON error,
+  and a session log that is busy for a moment keeps the last reading.
+
+## 0.9.11 — 2026-11-16
+
+PhoneBox now runs on Android 7 and 8 phones. Shortcut keys work in apps that read raw input, such as Discord, the
+default Terminal shortcut works on Windows 10 and on Linux outside the Debian family, and setup explains a Smart App
+Control block instead of stopping.
+
+**Android**
+- The app runs on Android 7.0 and later (it was Android 9), as first proposed by
+  [Sawaid-hub](https://github.com/Sawaid-hub) in #65. Two features need newer Android, so they are guarded:
+  before Android 8 the tap vibrations use the older vibration call, and drawing into the display cut-out starts at
+  Android 9 as before. Tested on an Android 7.1.1 phone with Chrome 119 as its WebView by
+  [anandyakshit](https://github.com/anandyakshit) (#73). `setup.ps1` and `setup.sh` now accept these phones.
+
+**Agent**
 - `display.language` is checked like the other settings: a code PhoneBox has no translation for (or an empty one) falls
   back to `auto`, which follows the phone or the browser. It is also in the three default configuration files.
+- Shortcut keys on Windows press the left Shift, Ctrl and Alt and send real scan codes. Before, they sent the generic
+  modifier keys with no scan code, and apps that read raw input, such as Discord, could take Shift for Right Shift
+  (#98).
+- The default Terminal shortcut works where its program is missing. Windows 10 has no Windows Terminal (`wt.exe`), so
+  PowerShell opens instead. Outside the Debian family there is no `x-terminal-emulator`, so `$TERMINAL` or the first
+  installed common terminal (GNOME Console, Konsole, Alacritty, kitty, xterm …) opens (#73).
+
+**Panel and settings**
+- Changing the language rebuilds the widgets on the phone, so they switch language right away instead of after the
+  next layout change. Texts the first translation pass missed (loading and "unavailable" messages, the Pomodoro
+  steps, the breathe widget, the hook button in the settings) are translated too (#96, Seyamalam).
+
+**Setup**
+- When Smart App Control blocks the unsigned agent, `setup.ps1` no longer stops with "An Application Control policy
+  has blocked this file". It says that PhoneBox is installed but can't run until the agent is signed (#56), and it
+  no longer claims the release agent runs with Smart App Control on (#69). A block by AppLocker or another policy on
+  a managed computer points to its administrator instead.
 
 ## 0.9.10 — 2026-11-16
 

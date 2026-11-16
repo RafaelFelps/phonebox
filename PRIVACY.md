@@ -12,7 +12,9 @@ Last updated: 2026-11-15 (PhoneBox 0.9.6).
   `~/Library/Application Support/PhoneBox` (macOS), plus `data.json` (pushed values and notifications) next to it.
   On macOS and Linux these files are readable only by your user (0600).
 - **Last Claude quota reading**: `claude-quota.json` next to the log (usage percentages and reset times, no token),
-  so the panel can show the last values after a restart.
+  so the panel can show the last values after a restart, and `claude-quota-schedule.json` (when the next check may
+  run, the last error message and, after Anthropic refused a token, a 16-character hash of that token, never the token
+  itself), so a restart doesn't ask Anthropic again sooner than it should.
 - **Log**: `agent.log` in `%LOCALAPPDATA%\PhoneBox` (Windows), `~/.local/share/PhoneBox` (Linux) or
   `~/Library/Application Support/PhoneBox` (macOS).
 - **Phone app**: caches (weather, rates, widget state) in its own app storage. The app asks for two permissions only:

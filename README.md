@@ -30,7 +30,7 @@ Windows, Linux and macOS. No root, PhoneBox account or cloud service required.</
   <a href="https://github.com/ersinkoc/phonebox/actions/workflows/build.yml"><img src="https://github.com/ersinkoc/phonebox/actions/workflows/build.yml/badge.svg" alt="Build status"></a>
   <a href="https://github.com/ersinkoc/phonebox/releases/latest"><img src="https://img.shields.io/github/v/release/ersinkoc/phonebox?label=release" alt="Latest release"></a>
   <img src="https://img.shields.io/badge/Windows%20%C2%B7%20Linux%20%C2%B7%20macOS-.NET%2010-512bd4" alt="Windows, Linux, macOS; .NET 10">
-  <img src="https://img.shields.io/badge/Android-9%2B-3ddc84" alt="Android 9+">
+  <img src="https://img.shields.io/badge/Android-7%2B-3ddc84" alt="Android 7+">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT license"></a>
 </p>
 
@@ -60,7 +60,7 @@ and a cost overview.
 
 ## Quick start
 
-You need an **Android 9+ phone** and a supported computer. USB uses a data cable and USB debugging; Wi-Fi pairing
+You need an **Android 7+ phone** and a supported computer. USB uses a data cable and USB debugging; Wi-Fi pairing
 works without either. Release agents include .NET, so you do not need to install the runtime.
 
 ### 1. Install the desktop agent
@@ -204,6 +204,12 @@ Free code signing provided by [SignPath.io](https://about.signpath.io/), certifi
 - **Team roles:** committer, reviewer and signing approver: [ersinkoc](https://github.com/ersinkoc).
   Pull requests from other contributors are reviewed before merging.
 - **Privacy:** see the [privacy policy](PRIVACY.md).
+
+## Thanks
+
+People who tested PhoneBox on their own hardware:
+
+- [anandyakshit](https://github.com/anandyakshit): Android 7 support, on an Android 7.1.1 phone ([#73](https://github.com/ersinkoc/phonebox/issues/73)).
 
 ## Sponsor
 

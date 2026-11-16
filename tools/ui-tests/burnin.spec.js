@@ -16,6 +16,9 @@ async function show(page, display) {
   }, display);
   await page.reload();
   await expect(page.locator('.w-note').first()).toBeVisible();
+  // Until the stored config arrives the panel runs on its defaults, whose night screen covers 00:30-07:30. Between
+  // those hours (on the CI's UTC clock too) a tap would only wake that screen; the next tick clears it.
+  await expect(page.locator('body')).not.toHaveClass(/night/);
 }
 
 const shift = (page) => page.evaluate(() => {

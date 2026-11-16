@@ -299,7 +299,9 @@ class MainActivity : Activity(), SensorEventListener {
         fun haptic(key: String) {
             if (!ok(key)) return
             val v = getSystemService(Vibrator::class.java) ?: return
-            if (v.hasVibrator()) v.vibrate(VibrationEffect.createOneShot(14, VibrationEffect.DEFAULT_AMPLITUDE))
+            if (!v.hasVibrator()) return
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) v.vibrate(VibrationEffect.createOneShot(14, VibrationEffect.DEFAULT_AMPLITUDE))
+            else @Suppress("DEPRECATION") v.vibrate(14)
         }
 
         /** Notification vibration; pattern is a "wait,vibrate,wait,vibrate..." list of milliseconds. */
@@ -308,7 +310,9 @@ class MainActivity : Activity(), SensorEventListener {
             if (!ok(key)) return
             val v = getSystemService(Vibrator::class.java) ?: return
             val timings = pattern.split(',').mapNotNull { it.trim().toLongOrNull() }.toLongArray()
-            if (v.hasVibrator() && timings.isNotEmpty()) v.vibrate(VibrationEffect.createWaveform(timings, -1))
+            if (!v.hasVibrator() || timings.isEmpty()) return
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) v.vibrate(VibrationEffect.createWaveform(timings, -1))
+            else @Suppress("DEPRECATION") v.vibrate(timings, -1)
         }
 
         @JavascriptInterface

@@ -148,12 +148,20 @@ public static class Ics
                 starts = Expand(start, rrule, zone, allDay, fromUtc, toUtc, local)
                     .Where(s => !exdates.Contains(s.Ticks) && !overrides.Contains((uid, s.Ticks)));
             }
-            foreach (var s in starts)
+            try
             {
-                var f = s + length;
-                if (f <= fromUtc && !(length == TimeSpan.Zero && s >= fromUtc)) continue;
-                if (s >= toUtc) break;
-                result.Add(new CalendarEvent(title, Ms(s), Ms(f), allDay, location, "", ""));
+                foreach (var s in starts)
+                {
+                    var f = s + length;
+                    if (f <= fromUtc && !(length == TimeSpan.Zero && s >= fromUtc)) continue;
+                    if (s >= toUtc) break;
+                    result.Add(new CalendarEvent(title, Ms(s), Ms(f), allDay, location, "", ""));
+                }
+            }
+            catch (ArgumentOutOfRangeException)
+            {
+                // a rule that steps past the year 9999 (a weekday, a time of day, the event's length) ends that event's
+                // repeats there; the occurrences before it and the rest of the feed stay
             }
         }
         return result;
@@ -187,19 +195,24 @@ public static class Ics
             var periodDays = freq switch { "DAILY" => 1.0, "WEEKLY" => 7, "MONTHLY" => 31, "YEARLY" => 366, _ => double.MaxValue };
             skip = Math.Max(0, (int)(days / (periodDays * interval)) - 2);
         }
+        // A huge but valid INTERVAL must not overflow the period arithmetic or the date adds below:
+        // an AddDays/AddMonths/AddYears past DateTime.MaxValue throws and takes the whole feed down.
+        var maxDays = (DateTime.MaxValue.Date - local.Date).Days;
+        var maxMonths = (9999 - local.Year) * 12 + 12 - local.Month;
         var emitted = 0;
         for (var period = skip; period < skip + 3000 && emitted < count; period++)
         {
+            var n = (long)period * interval;
             IEnumerable<DateTime> candidates = freq switch
             {
                 // BYDAY limits a daily rule to those weekdays (Thunderbird's "every weekday")
-                "DAILY" => local.AddDays(period * interval) is var day && (byDay.Count == 0 || byDay.Any(b => b.Item2 == day.DayOfWeek)) ? [day] : [],
-                "WEEKLY" => WeekDays(local, period * interval, byDay, wkst),
-                "MONTHLY" => MonthDays(local, period * interval, byDay, byMonthDay),
+                "DAILY" => n <= maxDays && local.AddDays(n) is var day && (byDay.Count == 0 || byDay.Any(b => b.Item2 == day.DayOfWeek)) ? [day] : [],
+                "WEEKLY" => n <= maxDays / 7 ? WeekDays(local, (int)n, byDay, wkst) : [],
+                "MONTHLY" => n <= maxMonths ? MonthDays(local, (int)n, byDay, byMonthDay) : [],
                 // BYMONTH (with BYDAY / BYMONTHDAY) picks days within those months: "second Sunday of May"
-                "YEARLY" when byMonth.Count > 0 => byMonth.SelectMany(m => MonthDays(local, period * interval * 12 + m - local.Month, byDay, byMonthDay)),
+                "YEARLY" when byMonth.Count > 0 => byMonth.SelectMany(m => n * 12 + m - local.Month is var mo && mo <= maxMonths ? MonthDays(local, (int)mo, byDay, byMonthDay) : Enumerable.Empty<DateTime>()),
                 // AddYears turns 29 February into the 28th; RFC 5545 skips the invalid date (leap-day birthdays)
-                "YEARLY" => local.AddYears(period * interval) is var year && year.Day == local.Day ? [year] : [],
+                "YEARLY" => n <= 9999 - local.Year && local.AddYears((int)n) is var year && year.Day == local.Day ? [year] : [],
                 _ => period == 0 ? [local] : [],
             };
             var set = candidates.OrderBy(x => x).ToList();

@@ -208,6 +208,34 @@ public class IcsTests
         var utc = Ics.Parse(Cal("UID:u\nDTSTART:20260302T080000Z\nRRULE:FREQ=WEEKLY\nSUMMARY:Sync"), summer, summer.AddDays(7), berlin).Single();
         Assert.Equal(new DateTime(2026, 7, 6, 8, 0, 0), Utc(utc.Start));
     }
+
+    [Fact]
+    public void AHugeIntervalCannotTakeDownTheFeed()
+    {
+        // RFC 5545 INTERVAL is any positive int; the period math used to overflow int and the date adds used to
+        // throw past DateTime.MaxValue, so one weird rule crashed Parse and dropped every event in the feed
+        var events = Ics.Parse(Cal(
+            "UID:1\nDTSTART:20261110T090000Z\nSUMMARY:Daily\nRRULE:FREQ=DAILY;INTERVAL=2000000000",
+            "UID:2\nDTSTART:20261110T090000Z\nSUMMARY:Monthly\nRRULE:FREQ=MONTHLY;INTERVAL=2000000",
+            "UID:3\nDTSTART:20261110T090000Z\nSUMMARY:Yearly\nRRULE:FREQ=YEARLY;INTERVAL=20000",
+            "UID:4\nDTSTART:20261111T100000Z\nSUMMARY:Review"), From, To).ToList();
+        Assert.Contains(events, e => e.Title == "Review");
+        Assert.Equal(3, events.Count(e => e.Title is "Daily" or "Monthly" or "Yearly")); // each still yields its DTSTART
+    }
+
+    [Fact]
+    public void ARuleThatRunsIntoTheYear9999OnlyStopsItsOwnEvent()
+    {
+        // within the interval bounds, but a weekday or a time of day near the end of the calendar still steps past
+        // DateTime.MaxValue: that event stops repeating, the rest of the feed stays
+        var events = Ics.Parse(Cal(
+            "UID:1\nDTSTART:20261110T090000Z\nSUMMARY:Weekly\nRRULE:FREQ=WEEKLY;INTERVAL=416018;BYDAY=TU,SU",
+            "UID:2\nDTSTART:20261110T230000Z\nDURATION:PT2H\nSUMMARY:Daily\nRRULE:FREQ=DAILY;INTERVAL=2912410",
+            "UID:3\nDTSTART:20261111T100000Z\nSUMMARY:Review"), From, To).ToList();
+        Assert.Contains(events, e => e.Title == "Review");
+        Assert.Contains(events, e => e.Title == "Weekly");
+        Assert.Contains(events, e => e.Title == "Daily");
+    }
 }
 
 public class RuleWindowTests

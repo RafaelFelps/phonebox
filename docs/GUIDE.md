@@ -153,6 +153,11 @@ permission prompts** and press *Install hook*: PhoneBox adds a `PermissionReques
 time, the hook returns no decision and Claude Code asks in the terminal as usual. Optionally only when you have been
 away from the keyboard for a minute.
 
+WorkBuddy speaks the same hook protocol. Add the same `PermissionRequest` entry to `~/.workbuddy/settings.json` by
+hand: *Install hook* writes to `~/.claude/settings.json` only. WorkBuddy keeps its sessions in `~/.workbuddy`, so the
+card takes the project name from the workspace name WorkBuddy stores
+(`~/.workbuddy/workspace-display-names.json`) instead of the folder name.
+
 ## Webhooks
 
 The agent accepts data as well as serving it, so anything that can make an HTTP request can put things on the panel:
@@ -193,6 +198,7 @@ for senders that cannot set headers). That key opens only the webhook endpoints,
 | an AI session needs you / is working (optionally for some projects) | show a page |
 | music or video plays (optionally in some apps: `Spotify\|Music`) | show a notification (`{detail}` = what happened) |
 | an app is running (`zoom\|Teams\|obs64`) | push a value (e.g. `onair`, shown by a Pushed value widget) |
+| an app is in front (`Code\|obs64\|Safari` — needs Accessibility on macOS, `xdotool` on Linux; not on Wayland) | |
 | the microphone / the camera is in use (Windows, Linux) | |
 | a calendar event is on (optionally by title) | |
 | OBS is recording or streaming | |
@@ -245,6 +251,9 @@ switchable ports). The panel keeps running over Wi-Fi while the USB power is off
 - **Claude quota:** read with the OAuth token Claude Code stores in `~/.claude/.credentials.json`, sent only to
   `api.anthropic.com/api/oauth/usage` (the endpoint behind Claude Code's `/usage`). The token is read-only: PhoneBox
   never refreshes it, so it can't interfere with Claude Code. This endpoint is undocumented and may change.
+  It is rate limited per account and shared with Claude Code, so PhoneBox asks at most every 3 minutes, and waits
+  longer after errors and as long as a `429` asks for, across restarts too. An expired or refused token is not sent:
+  PhoneBox waits until Claude Code renews it.
 - **Codex quota and sessions** are read from local files in `~/.codex/sessions`; Claude Code sessions from
   `~/.claude/sessions`.
 - **Native Antigravity quota:** the agent reads the running Antigravity server's port and CSRF token from its

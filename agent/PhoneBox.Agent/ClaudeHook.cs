@@ -27,7 +27,7 @@ public static class ClaudeHook
         var cwd = Str(input, "cwd") ?? "";
         var sessionId = Str(input, "session_id") ?? "";
         var session = sessions.Snapshot().FirstOrDefault(s => s.Id == "claude:" + sessionId);
-        var project = session?.Name ?? Path.GetFileName(cwd.TrimEnd('\\', '/'));
+        var project = session?.Name ?? ProjectName(cwd);
         var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         // AskUserQuestion is a question, not a permission: Allow would only open the same question in the terminal.
         var question = tool == "AskUserQuestion";
@@ -48,6 +48,13 @@ public static class ClaudeHook
             },
         };
     }
+
+    /// <summary>
+    /// What the panel shows as the project: the workspace name WorkBuddy remembers for a directory (its sessions are
+    /// invisible to <see cref="SessionMonitor"/>), otherwise the folder name as before.
+    /// </summary>
+    internal static string ProjectName(string cwd, string? homeDir = null) =>
+        WorkBuddyNames.For(cwd, homeDir) ?? Path.GetFileName(cwd.TrimEnd('\\', '/'));
 
     private static string ToolTitle(string tool) => tool switch
     {

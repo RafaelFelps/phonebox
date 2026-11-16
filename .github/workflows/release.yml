@@ -89,6 +89,9 @@ jobs:
           - { os: macos-latest, rid: osx-arm64, tfm: net10.0 }
           - { os: macos-15-intel, rid: osx-x64, tfm: net10.0 }
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+      actions: read # SignPath fetches the unsigned agent from this run's artifacts
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
@@ -104,6 +107,17 @@ jobs:
       - name: Sign macOS apphost ad hoc
         if: startsWith(matrix.rid, 'osx-')
         run: codesign --force --sign - out/PhoneBoxAgent
+      # Authenticode signing through SignPath Foundation, before the smoke test, the zip, the checksums, the attestation
+      # and the Scoop/winget hash, which all cover the signed file. It is on while the repository variable
+      # SIGNPATH_SIGNING_POLICY names a policy (release-signing); each request waits for a manual approval in SignPath.
+      - name: Sign PhoneBoxAgent.exe (SignPath)
+        if: matrix.rid == 'win-x64' && vars.SIGNPATH_SIGNING_POLICY != ''
+        uses: ./.github/actions/sign-windows-agent
+        with:
+          exe: out/PhoneBoxAgent.exe
+          signing-policy: ${{ vars.SIGNPATH_SIGNING_POLICY }}
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          trusted: ${{ vars.SIGNPATH_SIGNING_POLICY == 'release-signing' }}
       - name: Smoke-test the published agent on its native architecture
         shell: pwsh
         run: |

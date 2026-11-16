@@ -28,7 +28,8 @@ reviews:
         internet must be listed in PRIVACY.md.
     - path: "android/app/src/main/java/**"
       instructions: |
-        minSdk is 28. Flag new permissions, broadcast receivers registered without the right export flag on Android 13+,
+        minSdk is 24 (Android 7.0): newer APIs need a Build.VERSION check or a values-vNN resource. Flag new
+        permissions, broadcast receivers registered without the right export flag on Android 13+,
         and any change that lets a sandboxed frame or a non-panel request reach the native bridge or the agent.
     - path: "agent/PhoneBox.Agent/settings.html"
       instructions: |

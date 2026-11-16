@@ -23,7 +23,7 @@ public sealed partial class QuotaMonitor
     private async Task<bool> RefreshAntigravity(CancellationToken ct)
     {
         var endpoints = FindAntigravityEndpoints().Distinct().Take(8).ToArray();
-        var provider = endpoints.Length > 0 ? await ReadAntigravityAsync(_http, endpoints, ct) : null;
+        var provider = endpoints.Length > 0 ? await ReadAntigravityAsync(Http, endpoints, ct) : null;
         var cli = FindAntigravityCli();
         if (provider is null && cli is not null)
         {

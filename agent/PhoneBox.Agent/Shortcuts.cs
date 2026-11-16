@@ -110,9 +110,7 @@ public static class Shortcuts
                     break;
 #endif
                 default:
-                    var psi = new ProcessStartInfo(Home(sc.Cmd), Home(sc.Args ?? "")) { UseShellExecute = true };
-                    if (!string.IsNullOrEmpty(sc.Cwd)) psi.WorkingDirectory = Home(sc.Cwd);
-                    Process.Start(psi);
+                    Start(sc);
                     break;
             }
             log.LogInformation("shortcut: {Label}", sc.Label);
@@ -124,6 +122,57 @@ public static class Shortcuts
             return ex.Message;
         }
     }
+
+    private static void Start(Shortcut sc)
+    {
+        var psi = new ProcessStartInfo(Home(sc.Cmd), Home(sc.Args ?? "")) { UseShellExecute = true };
+        if (!string.IsNullOrEmpty(sc.Cwd)) psi.WorkingDirectory = Home(sc.Cwd);
+#if WINDOWS
+        try
+        {
+            Process.Start(psi);
+        }
+        catch (System.ComponentModel.Win32Exception ex) when (ex.NativeErrorCode == 2 /* not found */ && TerminalStandIns(sc.Cmd)
+            .Select(t => Path.Combine(Environment.SystemDirectory, t == "powershell.exe" ? @"WindowsPowerShell\v1.0\powershell.exe" : t))
+            .FirstOrDefault(File.Exists) is { } alt)
+        {
+            StartStandIn(alt, sc);
+        }
+#else
+        // a missing program does not throw here: .NET hands the name to xdg-open, which fails on its own
+        if (TerminalStandIns(sc.Cmd, Environment.GetEnvironmentVariable("TERMINAL")) is { Length: > 0 } alts && Sh.Which(sc.Cmd) is null
+            && alts.Select(Sh.Which).FirstOrDefault(p => p is not null) is { } alt)
+        {
+            StartStandIn(alt, sc);
+            return;
+        }
+        Process.Start(psi);
+#endif
+    }
+
+    // A stand-in is a fixed program at a full path on disk: start it directly, without the shell and without arguments.
+    // (The agent has no console on Windows, so a console program started this way gets its own window.)
+    private static void StartStandIn(string path, Shortcut sc)
+    {
+        var start = new ProcessStartInfo(path) { UseShellExecute = false };
+        if (!string.IsNullOrEmpty(sc.Cwd)) start.WorkingDirectory = Home(sc.Cwd);
+        Process.Start(start)?.Dispose();
+    }
+
+    /// <summary>
+    /// What to start instead when the default Terminal shortcut's program is missing: Windows Terminal (wt.exe) is not
+    /// part of Windows 10, and x-terminal-emulator only exists on Debian-family Linux (#73). Empty for other commands.
+    /// </summary>
+    internal static string[] TerminalStandIns(string cmd, string? terminalEnv = null) => cmd.Trim().ToLowerInvariant() switch
+    {
+        "wt.exe" or "wt" => ["powershell.exe", "cmd.exe"],
+        "x-terminal-emulator" =>
+        [
+            .. string.IsNullOrWhiteSpace(terminalEnv) ? [] : new[] { terminalEnv.Trim() },
+            "kgx", "gnome-terminal", "konsole", "xfce4-terminal", "mate-terminal", "lxterminal", "tilix", "alacritty", "kitty", "foot", "wezterm", "xterm",
+        ],
+        _ => [],
+    };
 
     /// <summary>"~" at the start of a path means the home folder (Linux / macOS style).</summary>
     private static string Home(string s) =>

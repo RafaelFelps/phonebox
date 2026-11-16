@@ -30,7 +30,7 @@ Windows, Linux ve macOS. Root, PhoneBox hesabı veya bulut hizmeti gerekmez.</p>
   <a href="https://github.com/ersinkoc/phonebox/actions/workflows/build.yml"><img src="https://github.com/ersinkoc/phonebox/actions/workflows/build.yml/badge.svg" alt="Derleme durumu"></a>
   <a href="https://github.com/ersinkoc/phonebox/releases/latest"><img src="https://img.shields.io/github/v/release/ersinkoc/phonebox?label=release" alt="Son sürüm"></a>
   <img src="https://img.shields.io/badge/Windows%20%C2%B7%20Linux%20%C2%B7%20macOS-.NET%2010-512bd4" alt="Windows, Linux, macOS; .NET 10">
-  <img src="https://img.shields.io/badge/Android-9%2B-3ddc84" alt="Android 9+">
+  <img src="https://img.shields.io/badge/Android-7%2B-3ddc84" alt="Android 7+">
   <a href="../LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT lisansı"></a>
 </p>
 
@@ -56,7 +56,7 @@ Model, zamanlama ve token ayrıntıları için bir yapay zekâ oturumuna dokunun
 
 ## Hızlı başlangıç
 
-**Android 9+ telefon** ve desteklenen bir bilgisayara ihtiyacınız vardır. USB bağlantısı veri kablosu ve USB hata ayıklama kullanır; Wi-Fi eşleştirme ikisi olmadan da çalışır. Sürüm ajanları .NET içerdiğinden ayrıca runtime kurmanız gerekmez.
+**Android 7+ telefon** ve desteklenen bir bilgisayara ihtiyacınız vardır. USB bağlantısı veri kablosu ve USB hata ayıklama kullanır; Wi-Fi eşleştirme ikisi olmadan da çalışır. Sürüm ajanları .NET içerdiğinden ayrıca runtime kurmanız gerekmez.
 
 ### 1. Masaüstü ajanını kurun
 

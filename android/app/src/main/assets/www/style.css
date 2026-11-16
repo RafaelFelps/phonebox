@@ -1175,3 +1175,46 @@ body.waking::after { opacity: 0; pointer-events: auto; transition: opacity .2s e
 .st-news-title { font-weight: 700; font-size: 14px; }
 .st-news-meta { font-size: 11.5px; color: var(--muted); margin: 1px 0 3px; }
 .st-news-text { font-size: 12.5px; color: #cbd5e1; line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+
+/* Steam game sheet (tap a game in the library): the game on the left, its achievements on the right */
+.st-sheet-back { z-index: 9990; padding: 12px; }
+.st-sheet { position: relative; display: grid; grid-template-columns: minmax(260px, 38%) 1fr; width: min(1000px, 100%); height: min(560px, calc(100vh - 24px)); overflow: hidden; border: 1px solid var(--line); border-radius: 18px; background: #151a21; box-shadow: 0 20px 60px #0009; }
+.st-sheet-side { position: relative; z-index: 1; display: flex; flex-direction: column; justify-content: flex-end; min-height: 0; overflow-y: auto; border-right: 1px solid #ffffff14; }
+.st-sheet-hero { position: absolute; inset: 0; z-index: 0; overflow: hidden; pointer-events: none; }
+.st-sheet-banner { width: 100%; height: 100%; object-fit: cover; object-position: center 20%; display: block; opacity: .6; filter: saturate(1.1); }
+.st-sheet-hero::after { content: ''; position: absolute; inset: 0; background: linear-gradient(180deg, #151a2133 0%, #151a21cc 45%, #151a21 80%), linear-gradient(90deg, #151a2166, transparent 40%, #151a21aa); }
+.st-sheet-banner.broken { visibility: hidden; }
+.st-sheet-info { padding: 10px 14px 14px; }
+.st-sheet-close { position: absolute; top: 6px; right: 6px; z-index: 2; width: 34px; height: 34px; border-radius: 50%; background: #000a; }
+.st-sheet-ach { position: relative; z-index: 1; min-height: 0; overflow-y: auto; padding: 12px 14px 14px; }
+.st-sheet-ach .st-ach-head, .st-sheet-ach .st-ach-sec > .st-bar { margin-right: 42px; }
+.st-sheet-title { margin: 0 0 8px; font-size: 22px; text-shadow: 0 2px 12px #000c; line-height: 1.2; overflow-wrap: anywhere; }
+.st-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.st-tag { padding: 2px 9px; border-radius: 999px; background: #ffffff12; color: var(--muted); font-size: 11px; }
+.st-tag.live { background: #22c55e26; color: #86efac; }
+.st-tag.warn { background: #f59e0b26; color: #fcd34d; }
+.st-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 10px; }
+.st-stat { display: flex; flex-direction: column; gap: 1px; padding: 6px 9px; border-radius: 9px; background: #0006; backdrop-filter: blur(6px); min-width: 0; }
+.st-stat span { color: var(--muted); font-size: 10px; }
+.st-stat b { font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.st-play { width: 100%; padding: 10px; border: 0; border-radius: 11px; background: linear-gradient(90deg, #47bfff, #1a44c2); color: #fff; font-size: 15px; font-weight: 700; }
+.st-play:disabled { opacity: .45; }
+.st-ach-seg { margin: 10px 0 4px; }
+.st-ach-list { display: flex; flex-direction: column; }
+.st-ach-row { display: flex; align-items: center; gap: 10px; padding: 7px 0; border-top: 1px solid var(--line); }
+.st-ach-big { flex: none; width: 40px; height: 40px; border-radius: 6px; background: #ffffff10; }
+.st-ach-big.broken { visibility: hidden; }
+.st-ach-row:not(.got) .st-ach-big { opacity: .55; filter: grayscale(1); }
+.st-ach-main { flex: 1; min-width: 0; }
+.st-ach-name { font-weight: 600; font-size: 13px; }
+.st-ach-row:not(.got) .st-ach-name { color: var(--muted); }
+.st-ach-desc { color: var(--dim); font-size: 11px; }
+.st-ach-side { flex: none; display: flex; flex-direction: column; align-items: flex-end; gap: 2px; font-size: 11px; color: var(--muted); text-align: right; }
+.st-ach-side small { font-size: 10px; color: var(--dim); }
+.st-ach-side small.rare { color: #fbbf24; }
+.st-ach-note { padding: 18px 0 4px; }
+@media (orientation: portrait) {
+  .st-sheet { grid-template-columns: 1fr; grid-template-rows: auto 1fr; height: calc(100vh - 24px); }
+  .st-sheet-side { overflow: visible; border-right: 0; border-bottom: 1px solid #ffffff14; padding-top: 80px; }
+  .st-stats { grid-template-columns: repeat(4, 1fr); }
+}

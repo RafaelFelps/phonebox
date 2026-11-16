@@ -16,6 +16,18 @@ public sealed record SteamNews(string Title, string Url, long Date, string? Feed
 public sealed record SteamSale(long AppId, string Name, int Discount, string Price, string? Was);
 public sealed record SteamLibraryItem(long AppId, string Name, long SizeBytes, long LastPlayed, long PlaytimeMin, bool Downloading);
 
+/// <param name="Percent">Share of all players who have it (null when Steam does not say).</param>
+/// <param name="Hidden">A secret achievement: the description stays hidden until it is unlocked.</param>
+public sealed record SteamAchievementItem(string Name, string? Description, string? Icon, bool Achieved, long UnlockedAt, double? Percent, bool Hidden);
+
+/// <summary>One game in the library sheet: what is on this PC, play time and, with the API key, every achievement.</summary>
+/// <param name="AchievementsNote">Why the list is empty: no key, a private profile, or a game without achievements.</param>
+public sealed record SteamGameDetails(long AppId, string Name, bool Installed, long SizeBytes, bool Downloading, bool Playing,
+    long LastPlayed, long PlaytimeMin, long TwoWeeksMin, int? Players, bool HasKey, string? AchievementsNote,
+    int Done, int Total, IReadOnlyList<SteamAchievementItem> Achievements);
+
+internal sealed record SteamSchemaEntry(string Name, string? Description, string? Icon, string? Gray, bool Hidden);
+
 /// <param name="Status">ok, not-installed (no Steam client found) or off (no Steam widget on a page)</param>
 public sealed record SteamSnapshot(string Status, string? Error, bool HasKey, bool ClientRunning, string? User, string? Avatar, int? State,
     SteamNow? Playing, SteamAchievements? Achievements, IReadOnlyList<SteamDownload> Downloads, IReadOnlyList<SteamFriend> Friends,
@@ -61,7 +73,11 @@ public sealed class SteamMonitor(ConfigStore config, PushStore push, ILogger<Ste
     private SteamAchievements? _ach;
     private HashSet<string>? _achDone;
     private long _achApp;
-    private readonly Dictionary<string, Dictionary<string, (string Name, string? Desc, string? Icon, string? Gray)>> _schema = [];
+    // read by the loop and by the game sheet's requests
+    private readonly ConcurrentDictionary<string, Dictionary<string, SteamSchemaEntry>> _schema = new();
+    private readonly ConcurrentDictionary<long, (Dictionary<string, double> Pct, long At)> _globalPct = new();
+    private readonly ConcurrentDictionary<long, (SteamGameDetails Details, long At)> _details = new();
+    private readonly ConcurrentDictionary<long, (int? Count, long At)> _playersAt = new();
     private readonly Dictionary<long, int?> _players = [];
     private long? _newsApp;
     private string? _newsGame;
@@ -361,17 +377,7 @@ public sealed class SteamMonitor(ConfigStore config, PushStore push, ILogger<Ste
     private async Task ReadAchievements(string key, long id, long app, SteamConfig cfg, CancellationToken ct)
     {
         var lang = Uri.EscapeDataString(cfg.Language);
-        var schemaKey = $"{app}|{cfg.Language}";
-        if (!_schema.ContainsKey(schemaKey))
-        {
-            var s = await GetJson($"{Api}/ISteamUserStats/GetSchemaForGame/v2/?key={key}&appid={app}&l={lang}", ct, allowForbidden: true);
-            var map = new Dictionary<string, (string, string?, string?, string?)>();
-            if (s?.TryGetProperty("game", out var g) == true && g.TryGetProperty("availableGameStats", out var st) && st.TryGetProperty("achievements", out var achs))
-                foreach (var a in achs.EnumerateArray())
-                    if (Str(a, "name") is { } n) map[n] = (Str(a, "displayName") ?? n, Str(a, "description"), Str(a, "icon"), Str(a, "icongray"));
-            _schema[schemaKey] = map;
-        }
-        var schema = _schema[schemaKey];
+        var schema = await Schema(key, app, cfg, ct);
         if (schema.Count == 0) { lock (_lock) { _ach = null; _achApp = app; _achDone = null; } return; }
         var j = await GetJson($"{Api}/ISteamUserStats/GetPlayerAchievements/v1/?key={key}&steamid={id}&appid={app}&l={lang}", ct, allowForbidden: true);
         if (j?.TryGetProperty("playerstats", out var ps) != true || !ps.TryGetProperty("achievements", out var list))
@@ -384,12 +390,12 @@ public sealed class SteamMonitor(ConfigStore config, PushStore push, ILogger<Ste
         foreach (var a in list.EnumerateArray())
         {
             var api = Str(a, "apiname") ?? "";
-            var meta = schema.TryGetValue(api, out var m) ? m : (api, null, null, null);
+            var meta = schema.TryGetValue(api, out var m) ? m : new SteamSchemaEntry(api, null, null, null, false);
             if (a.TryGetProperty("achieved", out var ach) && ach.GetInt32() == 1)
             {
-                done.Add((api, new(meta.Item1, meta.Item2, meta.Item3, (a.TryGetProperty("unlocktime", out var ut) ? ut.GetInt64() : 0) * 1000)));
+                done.Add((api, new(meta.Name, meta.Description, meta.Icon, (a.TryGetProperty("unlocktime", out var ut) ? ut.GetInt64() : 0) * 1000)));
             }
-            else todo.Add(new(meta.Item1, meta.Item2, meta.Item4 ?? meta.Item3, 0));
+            else todo.Add(new(meta.Name, meta.Hidden ? null : meta.Description, meta.Gray ?? meta.Icon, 0));
         }
         List<SteamAchievement> fresh = [];
         lock (_lock)
@@ -403,6 +409,106 @@ public sealed class SteamMonitor(ConfigStore config, PushStore push, ILogger<Ste
         }
         if (cfg.NotifyAchievements)
             foreach (var a in fresh.Take(3)) Notify("Achievement unlocked", $"{a.Name}" + (a.Description is { Length: > 0 } d ? $" — {d}" : ""), "ok");
+    }
+
+    /// <summary>The game's achievement names, texts and icons in the chosen language (kept for the agent's life).</summary>
+    private async Task<Dictionary<string, SteamSchemaEntry>> Schema(string key, long app, SteamConfig cfg, CancellationToken ct)
+    {
+        var schemaKey = $"{app}|{cfg.Language}";
+        if (_schema.TryGetValue(schemaKey, out var known)) return known;
+        var s = await GetJson($"{Api}/ISteamUserStats/GetSchemaForGame/v2/?key={key}&appid={app}&l={Uri.EscapeDataString(cfg.Language)}", ct, allowForbidden: true);
+        var map = new Dictionary<string, SteamSchemaEntry>();
+        if (s?.TryGetProperty("game", out var g) == true && g.TryGetProperty("availableGameStats", out var st) && st.TryGetProperty("achievements", out var achs))
+            foreach (var a in achs.EnumerateArray())
+                if (Str(a, "name") is { } n)
+                    map[n] = new(Str(a, "displayName") ?? n, Str(a, "description"), Str(a, "icon"), Str(a, "icongray"),
+                        a.TryGetProperty("hidden", out var hd) && hd.ValueKind == JsonValueKind.Number && hd.GetInt32() == 1);
+        if (s is not null) _schema[schemaKey] = map; // a failed request is tried again next time
+        return map;
+    }
+
+    /// <summary>How rare each achievement is (no key needed), refreshed every 6 hours.</summary>
+    private async Task<Dictionary<string, double>> GlobalPercents(long app, CancellationToken ct)
+    {
+        var now = Environment.TickCount64;
+        if (_globalPct.TryGetValue(app, out var c) && now - c.At < 6 * 3_600_000) return c.Pct;
+        var j = await GetJson($"{Api}/ISteamUserStats/GetGlobalAchievementPercentagesForApp/v2/?gameid={app}", ct, allowForbidden: true);
+        var map = new Dictionary<string, double>();
+        if (j?.TryGetProperty("achievementpercentages", out var ap) == true && ap.TryGetProperty("achievements", out var list))
+            foreach (var a in list.EnumerateArray())
+                if (Str(a, "name") is { } n && a.TryGetProperty("percent", out var p))
+                    map[n] = p.ValueKind == JsonValueKind.Number ? p.GetDouble() : double.TryParse(p.GetString(), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var d) ? d : 0;
+        _globalPct[app] = (map, now);
+        return map;
+    }
+
+    /// <summary>The library sheet for one game. Answers from a 60-second cache so tapping around costs Steam nothing.</summary>
+    public async Task<SteamGameDetails> GameDetails(long app, CancellationToken ct)
+    {
+        var now = Environment.TickCount64;
+        if (_details.TryGetValue(app, out var hit) && now - hit.At < 60_000) return hit.Details;
+        var cfg = config.Get().Steam;
+        SteamGame? game; SteamPlay? play; SteamRecent? recent; long id; bool playing;
+        lock (_lock)
+        {
+            game = _games.FirstOrDefault(g => g.AppId == app);
+            play = _play.GetValueOrDefault(app);
+            recent = _recent.FirstOrDefault(r => r.AppId == app);
+            id = _steamId;
+            playing = _running == app || (_running == 0 && _webGame == app);
+        }
+        int? players;
+        if (_playersAt.TryGetValue(app, out var pc) && now - pc.At < 300_000) players = pc.Count;
+        else
+        {
+            var pj = await GetJson($"{Api}/ISteamUserStats/GetNumberOfCurrentPlayers/v1/?appid={app}", ct, allowForbidden: true);
+            players = Resp(pj) is { } r && r.TryGetProperty("player_count", out var pcount) ? pcount.GetInt32() : null;
+            _playersAt[app] = (players, now);
+        }
+
+        var hasKey = !string.IsNullOrEmpty(cfg.ApiKey);
+        string? note = null;
+        var items = new List<SteamAchievementItem>();
+        if (!hasKey) note = "Add your Steam Web API key in Settings › Steam on the PC to see achievements";
+        else if (id == 0) note = "Steam account not found: sign in to Steam on this PC";
+        else
+        {
+            try
+            {
+                var key = Uri.EscapeDataString(cfg.ApiKey);
+                var schema = await Schema(key, app, cfg, ct);
+                if (schema.Count == 0) note = "This game has no achievements";
+                else
+                {
+                    var j = await GetJson($"{Api}/ISteamUserStats/GetPlayerAchievements/v1/?key={key}&steamid={id}&appid={app}&l={Uri.EscapeDataString(cfg.Language)}", ct, allowForbidden: true);
+                    var pct = await GlobalPercents(app, ct);
+                    if (j?.TryGetProperty("playerstats", out var ps) == true && ps.TryGetProperty("achievements", out var list))
+                    {
+                        foreach (var a in list.EnumerateArray())
+                        {
+                            var api = Str(a, "apiname") ?? "";
+                            var m = schema.TryGetValue(api, out var e) ? e : new SteamSchemaEntry(api, null, null, null, false);
+                            var got = a.TryGetProperty("achieved", out var ach) && ach.GetInt32() == 1;
+                            items.Add(new SteamAchievementItem(m.Name, got || !m.Hidden ? m.Description : null, got ? m.Icon : m.Gray ?? m.Icon, got,
+                                got && a.TryGetProperty("unlocktime", out var ut) ? ut.GetInt64() * 1000 : 0,
+                                pct.TryGetValue(api, out var p) ? Math.Round(p, 1) : null, m.Hidden && !got));
+                        }
+                    }
+                    else note = game is null && play is null && recent is null
+                        ? "You do not own this game"
+                        : "Steam did not share your achievements: set Game details to Public in your Steam privacy settings";
+                }
+            }
+            catch (SteamApiException ex) { note = ex.Message; }
+        }
+        // unlocked first (newest on top), then the rest from most to least common
+        var ordered = items.Where(i => i.Achieved).OrderByDescending(i => i.UnlockedAt)
+            .Concat(items.Where(i => !i.Achieved).OrderByDescending(i => i.Percent ?? -1)).ToList();
+        var details = new SteamGameDetails(app, NameOf(app), game is not null, game?.SizeBytes ?? 0, game?.Downloading ?? false, playing,
+            play?.LastPlayed ?? 0, Math.Max(play?.PlaytimeMin ?? 0, recent?.TotalMin ?? 0), recent?.TwoWeeksMin ?? 0, players, hasKey, note,
+            items.Count(i => i.Achieved), items.Count, ordered);
+        _details[app] = (details, now);
+        return details;
     }
 
     private async Task ReadSales(string key, long id, SteamConfig cfg, CancellationToken ct)
@@ -546,15 +652,15 @@ public sealed class SteamMonitor(ConfigStore config, PushStore push, ILogger<Ste
 
     // ------------------------------------------------------------------ images (covers, avatars, achievement icons)
 
-    public async Task<(byte[] Bytes, string Type)?> Cover(long app, bool portrait, CancellationToken ct)
+    public async Task<(byte[] Bytes, string Type)?> Cover(long app, string kind, CancellationToken ct)
     {
         string? root;
         lock (_lock) root = _root;
-        if (root is not null && SteamLocal.CoverPath(root, app, portrait) is { } local)
+        if (root is not null && SteamLocal.CoverPath(root, app, kind) is { } local)
         {
             try { return (await File.ReadAllBytesAsync(local, ct), "image/jpeg"); } catch (IOException) { }
         }
-        var name = portrait ? "library_600x900.jpg" : "header.jpg";
+        var name = kind switch { "header" => "header.jpg", "hero" => "library_hero.jpg", _ => "library_600x900.jpg" };
         return await Remote($"https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/{app}/{name}", ct)
             ?? await Remote($"https://cdn.cloudflare.steamstatic.com/steam/apps/{app}/{name}", ct);
     }

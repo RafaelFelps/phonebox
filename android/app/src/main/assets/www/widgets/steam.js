@@ -23,7 +23,7 @@ const proxied = (url) => (url ? `${API}/steam/img?u=${encodeURIComponent(url)}` 
 const img = (src, cls, alt = '') => {
   const i = h('img', cls);
   i.alt = alt; i.loading = 'lazy'; i.decoding = 'async';
-  if (src) i.src = src;
+  if (src) i.src = src; else i.classList.add('broken');
   i.onerror = () => i.classList.add('broken');
   return i;
 };
@@ -153,6 +153,84 @@ W['steam-friends'] = {
   },
 };
 
+// ================================================================ Game sheet (library tap)
+const ago = (ms) => (Date.now() - ms < 86_400_000 ? 'today' : `${shortDur(Date.now() - ms)} ago`);
+const day = (ms) => new Date(ms).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+
+/** A dialog with the game's details and its achievements; it closes like the other overlays (Back, idle return, page change). */
+function openGame(g, control) {
+  haptic();
+  const backdrop = h('div', 'session-backdrop st-sheet-back');
+  const panel = h('div', 'st-sheet');
+  panel.setAttribute('role', 'dialog');
+  panel.setAttribute('aria-modal', 'true');
+  const close = h('button', 'session-close st-sheet-close', '✕');
+  close.setAttribute('aria-label', 'Close');
+  const onKey = (e) => { if (e.key === 'Escape') dismiss(); };
+  const dismiss = () => { backdrop.remove(); document.removeEventListener('keydown', onKey); };
+  close.addEventListener('click', dismiss);
+  backdrop.addEventListener('click', (e) => { if (e.target === backdrop) dismiss(); });
+  document.addEventListener('keydown', onKey);
+
+  // the game's art fades in behind everything; two columns on a landscape panel: the game, then its achievements
+  const hero = h('div', 'st-sheet-hero', img(cover(g.appId, 'hero'), 'st-sheet-banner', ''));
+  const info = h('div', 'st-sheet-info', h('h2', 'st-sheet-title', g.name), h('div', 'empty', 'Loading…'));
+  const body = h('div', 'st-sheet-ach');
+  panel.append(hero, h('div', 'st-sheet-side', info), body, close);
+  backdrop.append(panel);
+  document.body.append(backdrop);
+
+  let filter = 'all', d = null;
+  const stat = (label, value) => h('div', 'st-stat', h('span', null, label), h('b', null, value));
+  const render = () => {
+    const tags = [];
+    if (d.playing) tags.push(h('span', 'st-tag live', 'Playing now'));
+    if (d.downloading) tags.push(h('span', 'st-tag warn', 'Downloading'));
+    tags.push(h('span', 'st-tag', d.installed ? `Installed${d.sizeBytes ? ' · ' + bytes(d.sizeBytes) : ''}` : 'Not installed'));
+    const stats = h('div', 'st-stats',
+      stat('Play time', d.playtimeMin ? hours(d.playtimeMin) : 'Never played'),
+      stat('Last 2 weeks', d.twoWeeksMin ? hours(d.twoWeeksMin) : '—'),
+      stat('Last played', d.lastPlayed ? ago(d.lastPlayed * 1000) : '—'),
+      stat('Playing now', d.players != null ? d.players.toLocaleString() : '—'));
+    const side = [h('h2', 'st-sheet-title', d.name), h('div', 'st-tags', ...tags), stats];
+    if (control && d.installed && !d.playing) {
+      const play = h('button', 'st-play', '▶  Play on the PC');
+      play.disabled = d.downloading;
+      play.addEventListener('click', async () => { if (await post(`launch/${d.appId}`, `Starting ${d.name} on the PC…`)) dismiss(); });
+      side.push(play);
+    }
+    info.replaceChildren(...side);
+    // achievements
+    const ach = h('div', 'st-ach-sec');
+    if (d.total) {
+      const pct = Math.round((d.done / d.total) * 100);
+      const bar = h('div', 'st-bar', h('i'));
+      bar.firstChild.style.width = `${pct}%`;
+      const seg = h('div', 'seg st-ach-seg');
+      for (const [k, label] of [['all', 'All'], ['done', `Unlocked ${d.done}`], ['todo', `Locked ${d.total - d.done}`]]) {
+        const b = h('button', filter === k ? 'on' : null, label);
+        b.addEventListener('click', () => { haptic(); filter = k; render(); });
+        seg.append(b);
+      }
+      const shown = d.achievements.filter((a) => filter === 'all' || (filter === 'done') === a.achieved);
+      ach.append(h('div', 'st-ach-head', h('span', '', '🏆 Achievements'), h('b', '', `${d.done}/${d.total} · ${pct}%`)), bar, seg,
+        h('div', 'st-ach-list', ...(shown.length ? shown.map((a) => h('div', 'st-ach-row' + (a.achieved ? ' got' : ''),
+          img(proxied(a.icon), 'st-ach-big'),
+          h('div', 'st-ach-main', h('div', 'st-ach-name', a.name),
+            h('div', 'st-ach-desc', a.description || (a.hidden ? 'Hidden achievement' : ''))),
+          h('div', 'st-ach-side',
+            a.achieved ? h('div', null, day(a.unlockedAt)) : h('div', 'st-ach-lock', '🔒'),
+            a.percent != null ? h('small', a.percent < 10 ? 'rare' : null, `${a.percent}% of players`) : '')))
+          : [h('div', 'empty', filter === 'done' ? 'Nothing unlocked yet' : 'All unlocked 🎉')])));
+    } else ach.append(h('div', 'st-ach-head', h('span', '', '🏆 Achievements')), h('div', 'empty st-ach-note', d.achievementsNote || 'This game has no achievements'));
+    const scroll = body.scrollTop;
+    body.replaceChildren(ach);
+    body.scrollTop = scroll;
+  };
+  api(`/steam/game/${g.appId}`, 'GET', 12_000).then((x) => { d = x; if (backdrop.isConnected) render(); })
+    .catch(() => { if (backdrop.isConnected) info.replaceChildren(h('h2', 'st-sheet-title', g.name), h('div', 'empty', 'The PC did not answer')); });
+}
+
 // ================================================================ Library (launcher)
 W['steam-library'] = {
   needs: ['tick'],
@@ -178,11 +256,7 @@ W['steam-library'] = {
       grid.replaceChildren(...list.map((g) => {
         const card = h('button', 'st-card' + (g.downloading ? ' busy' : ''), img(cover(g.appId), 'st-card-img', g.name),
           h('div', 'st-card-name', g.name), h('div', 'st-card-meta', g.playtimeMin ? hours(g.playtimeMin) : 'Never played'));
-        card.addEventListener('click', () => {
-          if (!control) return;
-          if (g.downloading) { toast(`${g.name} is still downloading`, 'warn'); return; }
-          post(`launch/${g.appId}`, `Starting ${g.name} on the PC…`);
-        });
+        card.addEventListener('click', () => openGame(g, control));
         return card;
       }));
     };

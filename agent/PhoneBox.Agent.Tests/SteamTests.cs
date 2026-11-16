@@ -81,10 +81,13 @@ public sealed class SteamTests
             File.WriteAllText(Path.Combine(cache, "10_library_600x900.jpg"), "x");
             File.WriteAllText(Path.Combine(cache, "20", "abc", "library_capsule.jpg"), "x");
             File.WriteAllText(Path.Combine(cache, "20", "abc", "library_header_brazilian.jpg"), "x");
-            Assert.EndsWith("10_library_600x900.jpg", SteamLocal.CoverPath(root, 10, portrait: true));
-            Assert.EndsWith("library_capsule.jpg", SteamLocal.CoverPath(root, 20, portrait: true));
-            Assert.EndsWith("library_header_brazilian.jpg", SteamLocal.CoverPath(root, 20, portrait: false));
-            Assert.Null(SteamLocal.CoverPath(root, 30, portrait: true));
+            File.WriteAllText(Path.Combine(cache, "20", "abc", "library_hero_blur.jpg"), "x");
+            File.WriteAllText(Path.Combine(cache, "20", "abc", "library_hero.jpg"), "x");
+            Assert.EndsWith("10_library_600x900.jpg", SteamLocal.CoverPath(root, 10, "portrait"));
+            Assert.EndsWith("library_capsule.jpg", SteamLocal.CoverPath(root, 20, "portrait"));
+            Assert.EndsWith("library_header_brazilian.jpg", SteamLocal.CoverPath(root, 20, "header"));
+            Assert.EndsWith("library_hero.jpg", SteamLocal.CoverPath(root, 20, "hero"));
+            Assert.Null(SteamLocal.CoverPath(root, 30, "portrait"));
         }
         finally { Directory.Delete(root, true); }
     }

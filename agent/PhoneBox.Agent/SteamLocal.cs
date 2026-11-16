@@ -255,10 +255,16 @@ public static class SteamLocal
     /// <summary>
     /// A cover the client cached, in librarycache/&lt;app&gt;/ or its subfolders. Older clients name them
     /// library_600x900 (portrait) and header (wide); newer ones library_capsule and library_header(_language).
+    /// <paramref name="kind"/> hero is the big background art without the logo.
     /// </summary>
-    public static string? CoverPath(string root, long app, bool portrait)
+    public static string? CoverPath(string root, long app, string kind)
     {
-        string[] names = portrait ? ["library_600x900", "library_capsule"] : ["header", "library_header"];
+        string[] names = kind switch
+        {
+            "header" => ["header", "library_header"],
+            "hero" => ["library_hero"],
+            _ => ["library_600x900", "library_capsule"],
+        };
         var cache = Path.Combine(root, "appcache", "librarycache");
         foreach (var name in names)
         {

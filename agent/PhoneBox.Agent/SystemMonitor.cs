@@ -45,7 +45,7 @@ public sealed class SystemMonitor(ILogger<SystemMonitor> log) : BackgroundServic
         _ = Task.Run(() => CpuTempLoop(ct), ct);
 
         var (idle0, total0) = CpuTimes();
-        var (rx0, tx0) = NetBytes();
+        var net0 = NetBytes();
         var t0 = Stopwatch.GetTimestamp();
         var tick = 0;
 
@@ -58,12 +58,11 @@ public sealed class SystemMonitor(ILogger<SystemMonitor> log) : BackgroundServic
             double? cpu = total > 0 ? Math.Clamp(100.0 * (total - (idle1 - idle0)) / total, 0, 100) : null;
             (idle0, total0) = (idle1, total1);
 
-            var (rx1, tx1) = NetBytes();
+            var net1 = NetBytes();
             var t1 = Stopwatch.GetTimestamp();
             var secs = Math.Max(0.001, (t1 - t0) / (double)Stopwatch.Frequency);
-            var down = Math.Max(0, (rx1 - rx0) / secs);
-            var up = Math.Max(0, (tx1 - tx0) / secs);
-            (rx0, tx0, t0) = (rx1, tx1, t1);
+            var (down, up) = NetworkRates(net0, net1, secs);
+            (net0, t0) = (net1, t1);
 
             if (tick++ % 15 == 0) _disks = ReadDisks();
 
@@ -252,9 +251,9 @@ public sealed class SystemMonitor(ILogger<SystemMonitor> log) : BackgroundServic
         return null;
     }
 
-    private static (long rx, long tx) NetBytes()
+    private static Dictionary<string, (long Rx, long Tx)> NetBytes()
     {
-        long rx = 0, tx = 0;
+        var counters = new Dictionary<string, (long Rx, long Tx)>();
         foreach (var ni in NetworkInterface.GetAllNetworkInterfaces())
         {
             if (ni.OperationalStatus != OperationalStatus.Up) continue;
@@ -269,12 +268,27 @@ public sealed class SystemMonitor(ILogger<SystemMonitor> log) : BackgroundServic
             try
             {
                 var s = ni.GetIPStatistics();
-                rx += s.BytesReceived;
-                tx += s.BytesSent;
+                counters[ni.Id] = (s.BytesReceived, s.BytesSent);
             }
             catch { }
         }
-        return (rx, tx);
+        return counters;
+    }
+
+    internal static (double Down, double Up) NetworkRates(
+        IReadOnlyDictionary<string, (long Rx, long Tx)> before,
+        IReadOnlyDictionary<string, (long Rx, long Tx)> after, double seconds)
+    {
+        double received = 0, sent = 0;
+        foreach (var (id, now) in after)
+        {
+            // Newly active adapters already carry lifetime totals. Only compare
+            // counters for adapters sampled in both readings.
+            if (!before.TryGetValue(id, out var previous)) continue;
+            if (now.Rx >= previous.Rx) received += now.Rx - previous.Rx;
+            if (now.Tx >= previous.Tx) sent += now.Tx - previous.Tx;
+        }
+        return (received / seconds, sent / seconds);
     }
 
     private static IReadOnlyList<DiskInfo> ReadDisks()

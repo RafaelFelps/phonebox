@@ -427,7 +427,7 @@ class MainActivity : Activity(), SensorEventListener {
         private val NO_STORE = mapOf("Cache-Control" to "no-store")
         private const val PANEL_HEADER = "X-PhoneBox-Panel"
         private val READ_ONLY_IMAGES = setOf("/agent/api/art", "/agent/api/procs/icon", "/agent/api/controls/radio-logo", "/agent/api/discord-avatar",
-            "/agent/api/steam/cover", "/agent/api/steam/img", "/agent/api/steam/shot")
+            "/agent/api/steam/cover", "/agent/api/steam/img", "/agent/api/steam/shot", "/agent/api/apps/icon")
         private fun FORBIDDEN() = WebResourceResponse("text/plain", "utf-8", 403, "Forbidden", NO_STORE, java.io.ByteArrayInputStream(ByteArray(0)))
     }
 }

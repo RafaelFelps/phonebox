@@ -44,10 +44,10 @@ W.exchange = {
         const from = new Date(Date.now() - 31 * 864e5).toISOString().slice(0, 10);
         const d = await cached(`fx:${base}:${syms}`, `https://api.frankfurter.dev/v1/${from}..?base=${base}&symbols=${syms.join(',')}`, 60 * 60_000);
         const days = Object.keys(d.rates).sort();
-        box.querySelector('.w-sub').textContent = 'ECB · ' + days.at(-1);
+        box.querySelector('.w-sub').textContent = 'ECB · ' + days[days.length - 1];
         list.replaceChildren(...syms.map((s) => {
           const series = days.map((k) => d.rates[k][s]).filter((x) => x != null);
-          const last = series.at(-1), prev = series.at(-2) ?? last;
+          const last = series[series.length - 1], prev = series.length > 1 ? series[series.length - 2] : last;
           const c = h('canvas', 'fx-sp');
           const row = h('div', 'fx-i', h('b', null, s), h('span', 'fx-v', fmtNum(last)), pctSpan(((last - prev) / prev) * 100), c);
           requestAnimationFrame(() => sparkLine(c, series, last >= series[0] ? '#22c55e' : '#ef4444'));

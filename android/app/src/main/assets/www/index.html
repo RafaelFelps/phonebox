@@ -79,6 +79,52 @@
   } catch (_) {}
 })();
 </script>
+<div id="jsfail" hidden role="alert" style="position:fixed;left:8px;right:8px;bottom:8px;z-index:200;padding:10px 12px;border-radius:10px;background:rgba(60,10,10,.96);border:1px solid rgba(248,113,113,.6);color:#fecaca;font:12px/1.4 monospace;white-space:pre-wrap;word-break:break-word;max-height:60vh;overflow:auto"></div>
+<script>
+// Anything that throws while the panel boots leaves a black screen with no clue. Show it instead.
+(function () {
+  var box = document.getElementById('jsfail'), lines = [];
+  window.__pbFail = function (text) {
+    if (lines.indexOf(text) >= 0) return;
+    lines.push(text);
+    if (!box) return;
+    box.hidden = false; box.style.display = 'block';
+    box.textContent = lines.join('\n');
+  };
+  // A warning that stays after the thing recovered is worse than none: it teaches the reader to ignore the box.
+  window.__pbClear = function (prefix) {
+    var keep = [];
+    for (var i = 0; i < lines.length; i++) if (lines[i].indexOf(prefix) !== 0) keep.push(lines[i]);
+    if (keep.length === lines.length) return;
+    lines = keep;
+    if (!box) return;
+    box.textContent = lines.join('\n');
+    if (!lines.length) { box.hidden = true; box.style.display = 'none'; }
+  };
+  window.addEventListener('error', function (e) {
+    var t = e && e.target;
+    if (t && t !== window && (t.src || t.href)) { window.__pbFail('LOAD FAIL ' + (t.src || t.href)); return; }
+    if (e && e.message) window.__pbFail('ERR ' + e.message + (e.filename ? '  ' + String(e.filename).split('/').pop() + ':' + e.lineno : ''));
+  }, true);
+  window.addEventListener('unhandledrejection', function (e) {
+    var r = e && e.reason;
+    window.__pbFail('REJECT ' + ((r && (r.stack || r.message)) || String(r)));
+  });
+  // main.js sets __pbUp at the end of its boot: a panel that rendered nothing by now never got there.
+  // A slow module graph can still arrive after this fires. The flag turning true means the message is stale, so
+  // take it back instead of leaving a working panel reporting a failure for the rest of the session.
+  setTimeout(function () {
+    if (window.__pbUp) return;
+    window.__pbFail('the panel did not finish booting in 8s\nUA: ' + navigator.userAgent);
+    var watch = setInterval(function () {
+      if (!window.__pbUp) return;
+      clearInterval(watch);
+      window.__pbClear('the panel did not finish booting');
+    }, 500);
+  }, 8000);
+})();
+</script>
+<script src="compat.js"></script>
 <script src="i18n.js"></script>
 <script type="module" src="main.js"></script>
 </body>

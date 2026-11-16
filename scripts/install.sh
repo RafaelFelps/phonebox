@@ -53,6 +53,22 @@ trap 'rm -rf "$tmp"' EXIT
 dotnet publish "$root/agent/PhoneBox.Agent" -c Release -f net10.0 -r "$rid" --self-contained false -o "$tmp" --nologo -v q
 app="$("$tmp/PhoneBoxAgent" --print-install-dir)"
 
+systemd_quote() {
+  printf '"%s"' "$(printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/%/%%/g')"
+}
+
+xml_escape() { printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'; }
+
+if [ "$autostart" = 1 ] && [ "$os" = linux ]; then
+  case "$app$DOTNET_ROOT${XDG_DATA_HOME:-}${XDG_CONFIG_HOME:-}" in
+    *'$'*|*'
+'*) echo 'The install or settings path is unsuitable for systemd autostart.' >&2; exit 1 ;;
+  esac
+  case "$app" in
+    *'"'*|*"'"*|*[\\]*) echo 'The install path is unsuitable for systemd autostart.' >&2; exit 1 ;;
+  esac
+fi
+
 echo "==> Stopping a running agent"
 if [ "$os" = linux ] && command -v systemctl >/dev/null; then systemctl --user stop phonebox.service 2>/dev/null || true; fi
 if [ "$os" = osx ]; then launchctl unload "$HOME/Library/LaunchAgents/net.oxog.phonebox.agent.plist" 2>/dev/null || true; fi
@@ -70,16 +86,23 @@ if [ "$autostart" = 1 ]; then
     echo "==> Adding a systemd user service (starts at login)"
     unit="$HOME/.config/systemd/user/phonebox.service"
     mkdir -p "$(dirname "$unit")"
+    env_lines=""
+    for name in DOTNET_ROOT XDG_DATA_HOME XDG_CONFIG_HOME; do
+      if [ -n "${!name:-}" ]; then
+        env_lines="${env_lines}Environment=$(systemd_quote "$name=${!name}")
+"
+      fi
+    done
     cat > "$unit" <<EOF
 [Unit]
 Description=PhoneBox agent (desk panel for an Android phone)
 After=graphical-session.target
 
 [Service]
-ExecStart=$app/PhoneBoxAgent
+ExecStart=$(systemd_quote "$app/PhoneBoxAgent")
 Restart=on-failure
 RestartSec=5
-Environment=DOTNET_ROOT=$DOTNET_ROOT
+${env_lines}
 
 [Install]
 WantedBy=default.target
@@ -95,10 +118,10 @@ EOF
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
   <key>Label</key><string>net.oxog.phonebox.agent</string>
-  <key>ProgramArguments</key><array><string>$app/PhoneBoxAgent</string></array>
+  <key>ProgramArguments</key><array><string>$(xml_escape "$app/PhoneBoxAgent")</string></array>
   <key>EnvironmentVariables</key><dict>
     <key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
-    <key>DOTNET_ROOT</key><string>$DOTNET_ROOT</string>
+    <key>DOTNET_ROOT</key><string>$(xml_escape "$DOTNET_ROOT")</string>
   </dict>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
@@ -114,12 +137,18 @@ fi
 if [ "$apk" = 1 ]; then
   adb="$(command -v adb || true)"
   [ -n "$adb" ] || { echo "adb not found (see the top of this script)" >&2; exit 1; }
-  # the newest of a release APK in dist/ and the last local build
-  apkfile="$(ls -t "$root"/dist/PhoneBox-*.apk "$root/android/app/build/outputs/apk/release/app-release.apk" 2>/dev/null | head -n1 || true)"
-  if [ -z "$apkfile" ]; then
+  built="$root/android/app/build/outputs/apk/release/app-release.apk"
+  sources="$root/android/app/src"
+  apkfile=""
+  for candidate in "$root"/dist/PhoneBox-*.apk "$built"; do
+    if [ -f "$candidate" ] && { [ -z "$apkfile" ] || [ "$candidate" -nt "$apkfile" ]; }; then
+      apkfile="$candidate"
+    fi
+  done
+  if [ -z "$apkfile" ] || { [ -d "$sources" ] && [ -n "$(find "$sources" -type f -newer "$apkfile" -print -quit)" ]; }; then
     echo "==> Building the APK (needs the Android SDK)"
     (cd "$root/android" && chmod +x gradlew && ./gradlew assembleRelease --console=plain -q)
-    apkfile="$root/android/app/build/outputs/apk/release/app-release.apk"
+    apkfile="$built"
   fi
   echo "==> Installing $(basename "$apkfile") on the phone"
   # Bash 3.2 treats an empty array as unset under nounset (the macOS system shell).

@@ -11,6 +11,8 @@ Last updated: 2026-11-15 (PhoneBox 0.9.6).
 - **Settings and layouts**: `config.json` in `%APPDATA%\PhoneBox` (Windows), `~/.config/PhoneBox` (Linux) or
   `~/Library/Application Support/PhoneBox` (macOS), plus `data.json` (pushed values and notifications) next to it.
   On macOS and Linux these files are readable only by your user (0600).
+- **Discord login**: if you use the Discord widget, `discord-token.json` next to `config.json` holds the access and
+  refresh token Discord gave PhoneBox (on macOS and Linux readable only by your user).
 - **Last Claude quota reading**: `claude-quota.json` next to the log (usage percentages and reset times, no token),
   so the panel can show the last values after a restart, and `claude-quota-schedule.json` (when the next check may
   run, the last error message and, after Anthropic refused a token, a 16-character hash of that token, never the token
@@ -23,7 +25,8 @@ Last updated: 2026-11-15 (PhoneBox 0.9.6).
   quotas, Docker / Podman, OBS) is read locally and goes only to your phone: over the USB cable (`adb reverse` to
   `127.0.0.1`) or, after pairing, over Wi-Fi / Tailscale with a pinned certificate and a key.
 - **Local services**: LibreHardwareMonitor's web server (`127.0.0.1:8085`), a running Antigravity language server
-  (loopback), the Docker / Podman socket and OBS WebSocket are local connections.
+  (loopback), the Docker / Podman socket, OBS WebSocket and the Discord desktop app's local connection (a named pipe
+  or socket on this computer) are local connections.
 
 [`scripts/uninstall.ps1 -Purge`](scripts/uninstall.ps1) and [`scripts/uninstall.sh --purge`](scripts/uninstall.sh)
 remove the agent together with its settings, pushed data and log (without the switch, settings are kept). Uninstalling
@@ -47,6 +50,7 @@ identifies your GitHub account to GitHub.
 
 | Feature | Where | What is sent |
 |---|---|---|
+| Discord widget | `discord.com/api/oauth2/token`, once at login and when the token needs renewing; `cdn.discordapp.com`, once per server icon and avatar shown (the agent fetches them, the phone never contacts Discord; the rest goes through the Discord app on this PC, locally). Turn off in **Settings › General › Discord** | The application's client ID and secret, and the one-time login code or the saved refresh token; for images only the image's id and hash, which Discord already knows |
 | Claude quota | `api.anthropic.com/api/oauth/usage` | The OAuth token Claude Code stores in `~/.claude/.credentials.json`, read-only; PhoneBox never refreshes it |
 | GitHub widget | `api.github.com`, through your own GitHub CLI (`gh`) | Whatever `gh` sends with its own sign-in |
 | Hacker News widget (phone) | `hacker-news.firebaseio.com` | Nothing but the request |

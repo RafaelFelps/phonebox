@@ -38,6 +38,9 @@
     let c = store.get('pb-demo-config', null);
     if (c) return c;
     const { templates } = await loadCatalog();
+    // A tab can save a layout while the first catalog request is still pending.
+    c = store.get('pb-demo-config', null);
+    if (c) return c;
     const byId = Object.fromEntries(templates.map((t) => [t.id, t]));
     const rule = (r) => ({ enabled: true, match: null, value: null, page: null, text: null, level: null, key: null, pushValue: null, whileActive: true, shortcut: null,
       priority: 5, forSec: 0, cooldownMin: 0, days: null, during: null, countdownSec: null, op: null, arg: null, ...r });
@@ -205,6 +208,7 @@
   let muteKeys = ['mute']; // ids of the shortcuts whose command is builtin:mute; their state is the computer's
 
   // made-up OBS: streaming for a while, buttons and scenes work
+  const dc = { muted: false, deaf: false, in: 'c1' };
   const obs = { streamingSince: now() - 754e3, recordingSince: 0, paused: false, scene: 'Desk', mic: false };
   function obsState() {
     return { enabled: true, control: true, snapshot: {
@@ -310,6 +314,9 @@
     ['claude', 'Claude', 7, 2.7, 1800], ['docker', 'Docker Desktop', 4, 2.1, 2600], ['spotify', 'Spotify', 5, 1.4, 420], ['discord', 'Discord', 6, 1.1, 610],
     ['explorer', 'Windows Explorer', 3, 0.9, 380], ['obs64', 'OBS Studio', 1, 0.8, 520], ['slack', 'Slack', 5, 0.6, 700], ['steam', 'Steam', 3, 0.4, 340],
     ['onedrive', 'Microsoft OneDrive', 1, 0.3, 120], ['python', 'Python', 2, 0.3, 160], ['figma', 'Figma', 3, 0.2, 640]];
+  const DEMO_APPS = ['Calculator', 'Calendar', 'Figma', 'Finder', 'Mail', 'Maps', 'Music', 'Notes', 'OBS', 'Photos', 'Safari', 'Slack',
+    'Spotify', 'System Settings', 'Terminal', 'Visual Studio Code', 'Xcode', 'Zoom']
+    .map((name, i) => ({ id: 'demo-app-' + i, name, hue: (i * 47) % 360 }));
   const procs = () => ({ total: 312, groupCount: 141, groups: PROCS.map(([name, title, count, cpu, memMb]) =>
     ({ name, title, count, cpu: Math.round(cpu * rnd(0.8, 1.2) * 10) / 10, memMb, locked: name === 'explorer', hasIcon: false })) });
   function procDetail(name) {
@@ -526,6 +533,20 @@
     }
     if (path === '/api/docker') return json({ ...docker(), control: allows(await config(), (t) => t === 'docker') });
     if (path === '/api/obs') { const c = await config(); return json({ ...obsState(), enabled: c.obs?.enabled !== false, control: widgets(c).some((w) => w.type === 'obs' && w.options?.control === true) }); }
+    if (path === '/api/discord') {
+      const c = await config();
+      return json({ enabled: true, control: widgets(c).some((w) => w.type === 'discord' && w.options?.control === true), snapshot: {
+        connected: true, error: null, user: 'demo', muted: dc.muted, deafened: dc.deaf, channelId: dc.in, channelName: dc.in ? 'Game night' : null, channelKind: dc.in ? 'voice' : null,
+        members: dc.in ? [{ id: '1', name: 'demo', muted: dc.muted, deafened: dc.deaf }, { id: '2', name: 'Ada', muted: false, deafened: false }, { id: '3', name: 'Linus', muted: true, deafened: false }] : [],
+        channels: [{ id: 'c1', name: 'Game night', guild: 'Friends' }, { id: 'c2', name: 'Stand-up', guild: 'Work' }],
+        notifications: [{ ts: now() - 60000, title: 'Ada', body: 'are you joining?' }] } });
+    }
+    if (path.startsWith('/api/discord/') && method === 'POST') {
+      if (!allows(await config(), (t) => t === 'discord')) return json({ error: "controlling Discord is turned off in the widget's settings" }, 400);
+      const a = path.slice(13);
+      if (a === 'mute') dc.muted = !dc.muted; else if (a === 'deafen') dc.deaf = !dc.deaf; else if (a === 'leave') dc.in = null; else if (a === 'join') dc.in = q.get('channel'); else return json({ error: 'unknown action' }, 400);
+      return json({ ok: true });
+    }
     if (path === '/api/phones') return json([
       { id: '3f9a1c0d7b2e', model: 'UMIDIGI BISON', lastSeen: now() - 2000, via: 'USB', webView: 'com.google.android.webview/134.0.6998.135', webviewProblem: null, name: null, pages: null },
       { id: 'c81e728d9d4c', model: 'samsung SM-X200', lastSeen: now() - 140000, via: 'Wi-Fi', webView: 'com.google.android.webview/134.0.6998.135', webviewProblem: null, name: null, pages: null },
@@ -536,6 +557,11 @@
       { name: 'MX Keys', level: 18, kind: 'keyboard', charging: null },
       { name: 'Xbox Wireless Controller', level: 40, kind: 'controller', charging: null },
     ] });
+    if (path === '/api/apps') { const c = await config(); return json({ supported: true, canOpen: widgets(c).some((w) => w.type === 'apps'), apps: DEMO_APPS }); }
+    if (path === '/api/apps/open' && method === 'POST') {
+      if (!widgets(await config()).some((w) => w.type === 'apps')) return json({ error: 'Add an All apps widget to a page to open apps from the phone' }, 400);
+      return DEMO_APPS.some((a) => a.id === q.get('id')) ? json({ ok: true }) : json({ error: 'Unknown app' }, 400);
+    }
     if (path.startsWith('/api/obs/') && method === 'POST') {
       if (!allows(await config(), isObs)) return json({ error: "controlling OBS is turned off in the widget's settings" }, 400);
       return obsAct(path.slice(9), q.get('scene')) ? json({ ok: true }) : json({ error: 'unknown action' }, 400);
@@ -644,8 +670,17 @@
   };
 
   // Album art and radio logos are <img>, which fetch() does not see: swap their address for the demo cover.
+  // App icons become a coloured tile with the app's initial.
+  const appIcon = (id) => {
+    const a = DEMO_APPS.find((x) => x.id === id) || { name: '?', hue: 210 };
+    return 'data:image/svg+xml,' + encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96"><rect x="6" y="6" width="84" height="84" rx="20" fill="hsl(${a.hue} 65% 52%)"/>`
+      + `<text x="48" y="62" font-family="system-ui,sans-serif" font-size="42" font-weight="700" text-anchor="middle" fill="#fff">${a.name.slice(0, 1)}</text></svg>`);
+  };
   const swapDemoImg = (img) => {
-    if (img.tagName === 'IMG' && /\/api\/(art|controls\/radio-logo)/.test(img.getAttribute('src') || '')) img.src = ART;
+    if (img.tagName !== 'IMG') return;
+    const src = img.getAttribute('src') || '';
+    if (/\/api\/(art|controls\/radio-logo)/.test(src)) img.src = ART;
+    else if (/\/api\/apps\/icon/.test(src)) img.src = appIcon(new URL(src, location.href).searchParams.get('id'));
   };
   new MutationObserver((list) => {
     for (const m of list) {

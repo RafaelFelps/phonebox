@@ -120,11 +120,21 @@ export async function safeFetch(url, opts = {}) {
 export async function api(path, method = 'GET', timeout = 2500) {
   const ctl = new AbortController();
   const t = setTimeout(() => ctl.abort(), timeout);
+  // The deadline rejects the caller itself instead of only aborting the request. Aborting is not enough: a body
+  // that started arriving can leave the read pending after the signal fires, and a caller waiting on it never
+  // reaches its own finally - that is what left the approval poll switched off for good.
+  const deadline = new Promise((_, fail) => setTimeout(() => fail(new Error('timeout')), timeout));
   try {
-    const r = await fetch(API + path, { method, signal: ctl.signal, cache: 'no-store', headers: PANEL_HEADERS });
-    if (!r.ok) throw new Error('HTTP ' + r.status);
-    const ct = r.headers.get('content-type') || '';
-    return ct.includes('json') ? r.json() : r.text();
+    const work = (async () => {
+      const r = await fetch(API + path, { method, signal: ctl.signal, cache: 'no-store', headers: PANEL_HEADERS });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const ct = r.headers.get('content-type') || '';
+      // Awaited on purpose: the timer is cleared in finally, so returning the promise unawaited let a response that
+      // sent its headers and then stalled hold the caller for good, past its own deadline.
+      return ct.includes('json') ? await r.json() : await r.text();
+    })();
+    work.catch(() => {}); // whichever side loses the race must not surface as an unhandled rejection
+    return await Promise.race([work, deadline]);
   } finally { clearTimeout(t); }
 }
 
@@ -774,9 +784,36 @@ export function handleNotify(d) {
 export let approvals = [];
 export let approvalShown = null;
 
+// A list request sent before the answer can land after it and hand back the already answered prompt, which would
+// pop the card up again on its own and buzz. Ids answered from this phone are dropped from every later list.
+const answered = new Set();
+const answeredCap = 50;
+
+// Ids whose answer is on its way to the agent. Tracked per id rather than as one flag because a list request can
+// put a different prompt on screen while this one is still posting, and neither may unlock the other's buttons.
+const submitting = new Set();
+
+function stillOpen(items) {
+  return items.filter((x) => !answered.has(x.id));
+}
+
+let approvalBusy = false;
+
 export async function loadApprovals() {
-  if (PREVIEW) return; // permission prompts are answered on the phone, not in the preview
-  try { approvals = (await api('/approvals')).items || []; } catch (_) { return; }
+  if (PREVIEW || approvalBusy) return; // a slow answer must not stack up with the next tick
+  approvalBusy = true;
+  try {
+    // api() gives up after 2.5s by default: plenty for a tap, too little for a list request on a phone that
+    // dozes, and the abort then looked exactly like a broken connection.
+    approvals = stillOpen((await api('/approvals', 'GET', 8000)).items || []);
+  } catch (e) {
+    const msg = (e && e.message) || String(e);
+    // Logged, never shown. The boot panel is for faults that need a new build; a list request that fails is
+    // routine, and an agent that goes away stays unreachable until it is back, so a banner here would outlive the
+    // outage it describes and teach the reader to ignore the box. The next tick and the live stream both retry.
+    if (!/abort|timeout/i.test(msg)) console.warn('approvals: list request failed:', msg);
+    return;
+  } finally { approvalBusy = false; }
   renderApproval();
 }
 
@@ -790,7 +827,8 @@ export function renderApproval() {
     undim();
     if (nightOn) { wakeUntil = Date.now() + 60_000; setNight(false); }
     buzz('0,120,80,120,80,240');
-    $('apAllow').disabled = $('apDeny').disabled = $('apSkip').disabled = false;
+    // A prompt whose answer is still in flight comes back locked: it can be shown again while its own post runs.
+    $('apAllow').disabled = $('apDeny').disabled = $('apSkip').disabled = submitting.has(a.id);
   }
   // A question from Claude is answered at the PC (the terminal shows it); the phone only tells you it is waiting.
   const asking = a.kind === 'question';
@@ -817,16 +855,39 @@ export function tickApproval() {
 }
 setInterval(tickApproval, 1000);
 
+// The live stream reconnects every minute on Wi-Fi and starts at the agent's current sequence, so anything emitted
+// while it was down is never replayed. An approval lost that way leaves the command waiting in the dark with nothing
+// on screen, so ask for the list outright as well instead of relying on the event alone. Only while the panel is on
+// screen: the answer is needed when someone is looking, and a phone in a pocket should not poll all night.
+setInterval(() => { if (!PREVIEW && !document.hidden) loadApprovals(); }, 5000);
+
 export async function decide(decision) {
   const a = approvals[0];
-  if (!a) return;
+  if (!a || submitting.has(a.id)) return;
   haptic();
+  submitting.add(a.id);
   $('apAllow').disabled = $('apDeny').disabled = $('apSkip').disabled = true;
+  let accepted = false;
   try {
     await api(`/approvals/${encodeURIComponent(a.id)}?decision=${decision}`, 'POST', 4000);
+    accepted = true;
     if (decision === 'skip') toast(t('panel.questionWaiting'), 'warn');
     else toast(t(decision === 'allow' ? 'panel.allowedTool' : 'panel.deniedTool', { tool: a.tool }), decision === 'allow' ? 'ok' : 'err');
   } catch (_) { toast(t('panel.alreadyAnswered'), 'warn'); }
+  finally { submitting.delete(a.id); }
+  if (!accepted) {
+    // The agent never took the answer, so the prompt is still live and the command is still blocked. Hiding it
+    // here would leave nothing on screen while the computer waits; the buttons come back and the next list
+    // request settles whether the prompt really is gone. Only for this prompt though: a list request may have
+    // moved on to another approval while this one was in flight, and unlocking that one would let a second
+    // answer go out for a prompt whose own post is still running.
+    if (approvals[0] && approvals[0].id === a.id) {
+      $('apAllow').disabled = $('apDeny').disabled = $('apSkip').disabled = false;
+    }
+    return;
+  }
+  answered.add(a.id);
+  if (answered.size > answeredCap) answered.delete(answered.values().next().value);
   approvals = approvals.filter((x) => x.id !== a.id);
   renderApproval();
 }
@@ -866,7 +927,7 @@ export const isPortrait = () => window.innerHeight > window.innerWidth * 1.05;
 export function portraitLayout(widgets) {
   const cols = 6, occ = [], pos = new Map();
   const free = (x, y, w, h) => { for (let r = y; r < y + h; r++) for (let c = x; c < x + w; c++) if (occ[r]?.[c]) return false; return true; };
-  const take = (x, y, w, h) => { for (let r = y; r < y + h; r++) { occ[r] ||= []; for (let c = x; c < x + w; c++) occ[r][c] = true; } };
+  const take = (x, y, w, h) => { for (let r = y; r < y + h; r++) { occ[r] = occ[r] || []; for (let c = x; c < x + w; c++) occ[r][c] = true; } };
   for (const w of [...widgets].sort((a, b) => a.y - b.y || a.x - b.x)) {
     const ww = Math.min(cols, w.w), hh = w.h;
     search: for (let y = 0; y < 200; y++) for (let x = 0; x + ww <= cols; x++) if (free(x, y, ww, hh)) { take(x, y, ww, hh); pos.set(w, { x, y, w: ww, h: hh }); break search; }
@@ -925,8 +986,8 @@ export function activeSet() { return new Set([curPage - 1, curPage, curPage + 1]
 export const pageOf = (kind) => mounted.filter((m) => m.pi === curPage && m.def.needs.includes(kind)).length > 0;
 export const anyNeeds = (kind) => mounted.some((m) => m.def.needs.includes(kind));
 
-export function runUpdate(m, kind) {
-  try { m.inst.update?.(kind); } catch (e) { console.warn(m.ctx.w.type, e); }
+export function runUpdate(m, kind, background = false) {
+  try { m.inst.update?.(kind, background); } catch (e) { console.warn(m.ctx.w.type, e); }
 }
 
 /** Delivers fresh data to the widgets on the visible pages; the others catch up when they come into view. */
@@ -935,7 +996,9 @@ export function emit(kind) {
   for (const m of mounted) {
     if (!m.def.needs.includes(kind)) continue;
     // alarms (timer, pomodoro) must go off on whatever page is showing, so those widgets get every tick
-    if (act.has(m.pi) || (m.def.always && kind === 'tick')) runUpdate(m, kind); else m.dirty = true;
+    if (act.has(m.pi)) runUpdate(m, kind);
+    else if (m.def.always && kind === 'tick') runUpdate(m, kind, true);
+    else m.dirty = true;
   }
 }
 
@@ -1406,7 +1469,7 @@ window.onAndroidSensor = (kind, value) => {
   if (kind === 'light') {
     lux = +value;
     // dark room: below 3 lux for 30 s; light again above 15 lux
-    if (lux < 3) { darkSince ||= Date.now(); } else darkSince = 0;
+    if (lux < 3) { darkSince = darkSince || Date.now(); } else darkSince = 0;
     if (darkRoom && lux > 15) darkRoom = false;
     applyBrightness();
   } else if (kind === 'proximity' && value === true && cfg.display?.proximityWake !== false && (nightOn || dimmed)) {
@@ -1711,3 +1774,10 @@ function reportBattery() {
 }
 setInterval(reportBattery, 30_000);
 setTimeout(reportBattery, 5000);
+
+// index.html's boot watchdog waits for this: reaching the end of the module means the panel got through its first
+// render, so a throw anywhere above shows up as a message there instead of a black screen.
+window.__pbUp = true;
+// A slow module graph can still arrive after the watchdog spoke: with the boot warning left in place the panel would
+// report a failure while working normally.
+if (window.__pbClear) window.__pbClear('the panel did not finish booting');

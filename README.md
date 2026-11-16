@@ -180,7 +180,8 @@ Read the [security details](docs/GUIDE.md#security--privacy). To report a vulner
 ## Development
 
 The agent uses **.NET 10**; the Android app uses **Kotlin and a WebView** with plain JavaScript widgets.
-For Android builds, install **JDK 17** and **Android SDK Platform 35**.
+For Android builds, install **JDK 17** and **Android SDK Platform 35** (the SDK the app is built with; the app itself
+runs on Android 7.0, API 24, and later).
 Preview the panel and editor from source with Python 3, using simulated data:
 
 ```sh

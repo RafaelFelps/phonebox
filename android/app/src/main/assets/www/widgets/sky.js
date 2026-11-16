@@ -60,10 +60,17 @@ W.air = {
         const d = await cached(`air:${lat},${lon}`, `https://air-quality-api.open-meteo.com/v1/air-quality?latitude=${lat}&longitude=${lon}` +
           '&current=european_aqi,pm2_5,pm10,ozone,nitrogen_dioxide&timezone=auto', 30 * 60_000);
         const c = d.current || {};
-        const band = AQI_BANDS.find((b) => (c.european_aqi ?? 0) <= b[0]);
-        box.style.setProperty('--c', band[2]);
-        v.textContent = Math.round(c.european_aqi ?? 0);
-        cat.textContent = band[1] + ' · ' + t('w.euroAqi');
+        const aqi = c.european_aqi;
+        const band = Number.isFinite(aqi) && aqi >= 0 ? AQI_BANDS.find((b) => aqi <= b[0]) : null;
+        if (band) {
+          box.style.setProperty('--c', band[2]);
+          v.textContent = Math.round(aqi);
+          cat.textContent = band[1] + ' · ' + t('w.euroAqi');
+        } else {
+          box.style.removeProperty('--c');
+          v.textContent = '—';
+          cat.textContent = t('w.unavailable');
+        }
         chips.replaceChildren(...[['PM2.5', c.pm2_5], ['PM10', c.pm10], ['O₃', c.ozone], ['NO₂', c.nitrogen_dioxide]]
           .filter((x) => x[1] != null).map(([n, x]) => h('span', 'chip', `${n} ${Math.round(x)}`)));
       } catch (_) { cat.textContent = t('w.unavailable'); return false; }

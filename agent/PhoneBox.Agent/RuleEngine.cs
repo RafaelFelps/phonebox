@@ -324,8 +324,9 @@ public sealed class RuleEngine(ConfigStore config, PushStore push, SessionMonito
     public static bool InWindow(string window, TimeSpan now)
     {
         var parts = window.Split('-', StringSplitOptions.TrimEntries);
-        if (!Clock(parts[0], out var from)) return false;
-        var to = parts.Length > 1 && Clock(parts[1], out var t) ? t : from + TimeSpan.FromMinutes(1);
+        if (parts.Length > 2 || !Clock(parts[0], out var from)) return false;
+        var to = from + TimeSpan.FromMinutes(1);
+        if (parts.Length == 2 && !Clock(parts[1], out to)) return false;
         return from <= to ? now >= from && now < to : now >= from || now < to;
     }
 
@@ -333,7 +334,7 @@ public sealed class RuleEngine(ConfigStore config, PushStore push, SessionMonito
     private static bool Clock(string text, out TimeSpan time)
     {
         if (text is "24:00" or "24:00:00") { time = TimeSpan.FromDays(1); return true; }
-        return TimeSpan.TryParse(text, out time);
+        return TimeSpan.TryParse(text, out time) && time >= TimeSpan.Zero && time < TimeSpan.FromDays(1);
     }
 
     private HashSet<string> Processes()

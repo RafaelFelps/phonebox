@@ -110,6 +110,17 @@
 
       // Widgets
       'w.loading': 'Loading…',
+      'w.discord.notInChannel': 'Not in a voice channel',
+      'w.discord.turnOn': 'Turn on Discord in Settings › General',
+      'w.discord.failed': 'Discord did not do it',
+      'w.discord.otherServer': 'Other',
+      'w.discord.channel': '{n} channel',
+      'w.discord.channels': '{n} channels',
+      's.discord.title': 'Discord',
+      's.discord.enable': 'Connect to the Discord app on this PC (for the Discord widget)',
+      's.discord.hint': 'Create an application at discord.com/developers/applications, add the redirect http://127.0.0.1 under OAuth2, and copy its client ID and secret here. Discord asks you to approve PhoneBox once. If it refuses the login, add your account under the application\'s App Testers. Step by step: docs/DISCORD.md.',
+      's.discord.clientId': 'Client ID',
+      's.discord.clientSecret': 'Client secret',
       'w.offline': 'Offline',
       'w.unavailable': 'Unavailable',
       'w.running': 'Running…',
@@ -2834,7 +2845,7 @@
     if (s === undefined) return key;
     if (vars) {
       for (const [k, v] of Object.entries(vars)) {
-        s = s.replaceAll(`{${k}}`, v == null ? '' : String(v));
+        s = s.split(`{${k}}`).join(v == null ? '' : String(v));
       }
     }
     return s;

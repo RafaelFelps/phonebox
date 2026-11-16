@@ -40,6 +40,31 @@ test('stack rotates with the panel clock and an empty stack stays empty', async 
   await expect(page.locator('.stack-item')).toHaveCount(0);
 });
 
+test('a timer in a stack rings when another page is active', async ({ page }) => {
+  await page.clock.install();
+  await page.addInitScript(() => {
+    localStorage.setItem('pb-demo-config', JSON.stringify({
+      night: { enabled: false }, rules: [], shortcuts: [], display: { idleReturnSec: 0 },
+      pages: [
+        { id: 'timer', title: 'Timer', widgets: [{ id: 'stack', type: 'stack', x: 0, y: 0, w: 12, h: 6, options: { widgets: [{ type: 'timer', options: { presets: '1' } }] } }] },
+        { id: 'next', title: 'Next', widgets: [{ id: 'n', type: 'note', x: 0, y: 0, w: 12, h: 6, options: { text: 'Next' } }] },
+        { id: 'away', title: 'Away', widgets: [{ id: 'a', type: 'note', x: 0, y: 0, w: 12, h: 6, options: { text: 'Away' } }] },
+      ],
+    }));
+  });
+  await page.goto('/panel/');
+  await expect(page.locator('#dots i')).toHaveCount(3);
+  await page.locator('.w-stack .w-timer').getByRole('button', { name: '1m' }).click();
+  await page.keyboard.press('ArrowRight');
+  await page.keyboard.press('ArrowRight');
+  await expect(page.locator('#dots i').nth(2)).toHaveClass('on');
+  const later = await page.evaluate(() => Date.now() + 62_000);
+  await page.clock.setSystemTime(later);
+  await expect(page.locator('#dots i').nth(2)).toHaveClass('on');
+  await page.evaluate(async () => (await import('/panel/main.js')).emit('tick'));
+  await expect(page.locator('#toast')).toContainText('Time is up', { timeout: 1200 });
+});
+
 test('quota selection preserves empty selections and explains missing data', async ({ page }) => {
   await layout(page, [widget('quotas', { providers: [] })]);
   await expect(page.locator('.w-quotas')).toContainText('No quota providers enabled');

@@ -7,6 +7,23 @@ using Xunit;
 
 public sealed class PushInputTests
 {
+    [Fact]
+    public void APartialPushSnapshotKeepsItsValidEntriesWithoutBreakingState()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"phonebox-push-{Guid.NewGuid():N}.json");
+        File.WriteAllText(path, """{"missing":null,"partial":{},"noTime":{"Data":"x","At":null},"text":"oops","valid":{"Data":"ready","At":1}}""");
+        try
+        {
+            var store = new PushStore(NullLogger<PushStore>.Instance, path);
+            var items = store.Snapshot();
+            var item = Assert.Single(items);
+            Assert.Equal("valid", item.Key);
+            Assert.Equal("ready", item.Value.Data.GetString());
+            Assert.Contains("ready", JsonSerializer.Serialize(items));
+        }
+        finally { File.Delete(path); }
+    }
+
     [Theory]
     [InlineData("\"later\"")]
     [InlineData("true")]

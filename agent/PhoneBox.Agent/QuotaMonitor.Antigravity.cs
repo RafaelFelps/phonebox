@@ -99,40 +99,33 @@ public sealed partial class QuotaMonitor
             if (budget.IsCancellationRequested) break;
             using var deadline = CancellationTokenSource.CreateLinkedTokenSource(budget.Token);
             deadline.CancelAfter(TimeSpan.FromSeconds(3));
-            var limits = new List<QuotaLimit>();
-            string? plan = null;
-            try
-            {
-                using var summary = await Post("RetrieveUserQuotaSummary");
-                if (summary is not null) limits = ParseAntigravityLimits(summary.RootElement);
-                try
-                {
-                    using var status = await Post("GetUserStatus");
-                    if (status is not null)
-                    {
-                        plan = ParseAntigravityPlan(status.RootElement);
-                        if (limits.Count == 0) limits = ParseAntigravityLegacyLimits(status.RootElement);
-                    }
-                }
-                catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
-                catch (Exception ex) when (ex is HttpRequestException or JsonException or OperationCanceledException) { }
-                if (limits.Count > 0)
-                    return new QuotaProvider("antigravity", "Antigravity", plan ?? "Antigravity", limits,
-                        null, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), null);
-            }
-            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
-            catch (Exception ex) when (ex is HttpRequestException or JsonException or OperationCanceledException) { }
+            using var summary = await Post("RetrieveUserQuotaSummary");
+            var limits = summary is not null ? ParseAntigravityLimits(summary.RootElement) : [];
+            using var status = await Post("GetUserStatus");
+            var plan = status is not null ? ParseAntigravityPlan(status.RootElement) : null;
+            if (status is not null && limits.Count == 0)
+                limits = ParseAntigravityLegacyLimits(status.RootElement);
+            if (limits.Count > 0)
+                return new QuotaProvider("antigravity", "Antigravity", plan ?? "Antigravity", limits,
+                    null, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), null);
 
             async Task<JsonDocument?> Post(string method)
             {
-                using var req = new HttpRequestMessage(HttpMethod.Post,
-                    $"http://127.0.0.1:{ep.Port}/exa.language_server_pb.LanguageServerService/{method}");
-                req.Headers.Add("X-Codeium-Csrf-Token", ep.CsrfToken);
-                req.Headers.Add("Connect-Protocol-Version", "1");
-                req.Content = new StringContent("{}", Encoding.UTF8, "application/json");
-                using var response = await http.SendAsync(req, deadline.Token);
-                if (!response.IsSuccessStatusCode) return null;
-                return JsonDocument.Parse(await response.Content.ReadAsStringAsync(deadline.Token));
+                ct.ThrowIfCancellationRequested();
+                if (deadline.IsCancellationRequested) return null;
+                try
+                {
+                    using var req = new HttpRequestMessage(HttpMethod.Post,
+                        $"http://127.0.0.1:{ep.Port}/exa.language_server_pb.LanguageServerService/{method}");
+                    req.Headers.Add("X-Codeium-Csrf-Token", ep.CsrfToken);
+                    req.Headers.Add("Connect-Protocol-Version", "1");
+                    req.Content = new StringContent("{}", Encoding.UTF8, "application/json");
+                    using var response = await http.SendAsync(req, deadline.Token);
+                    if (!response.IsSuccessStatusCode) return null;
+                    return JsonDocument.Parse(await response.Content.ReadAsStringAsync(deadline.Token));
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+                catch (Exception ex) when (ex is HttpRequestException or JsonException or OperationCanceledException) { return null; }
             }
         }
         return null;

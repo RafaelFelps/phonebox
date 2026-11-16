@@ -257,6 +257,89 @@ W.docker = {
   },
 };
 
+// The computer's installed applications (macOS): search, tap one to open it (or bring it forward) on the computer.
+// The phone only sends the app's id; the agent opens apps from its own scan.
+W.apps = {
+  needs: ['tick'],
+  create(box, { o }) {
+    const pinned = String(o.pinned || '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
+    const confirm = o.confirm !== false; // first tap selects, a second tap within a few seconds opens
+    let data = null, q = '', busy = null, armed = null, armTimer = 0, lastKey = '';
+    const disarm = () => { clearTimeout(armTimer); if (armed) { armed = null; render(true); } };
+    const head = h('div', 'w-title', o.title || 'Apps', h('span', 'ap-count'));
+    const search = h('input', 'ap-search');
+    search.type = 'search';
+    search.placeholder = 'Search apps';
+    search.autocomplete = 'off';
+    search.spellcheck = false;
+    search.addEventListener('input', () => { q = search.value.trim().toLowerCase(); render(true); });
+    const grid = h('div', 'ap-grid');
+    box.append(head, ...(o.search === false ? [] : [search]), grid);
+
+    const load = async () => { try { data = await api('/apps', 'GET', 10_000); } catch (_) { return false; } };
+    const open = async (a) => {
+      if (!data?.canOpen) { toast('Opening apps needs an All apps widget saved on a page'); return; }
+      haptic();
+      busy = a.id; render(true);
+      try {
+        const r = await fetch(`${API}/apps/open?id=${encodeURIComponent(a.id)}`, { method: 'POST', cache: 'no-store', headers: PANEL_HEADERS });
+        const j = await r.json().catch(() => ({}));
+        if (r.ok) toast(`Opening ${a.name}`, 'ok'); else toast(j.error || `Could not open ${a.name}`, 'err');
+      } catch (_) { toast('The PC did not answer', 'err'); }
+      busy = null; render(true);
+    };
+    const rank = (a) => { const i = pinned.indexOf(a.name.toLowerCase()); return i < 0 ? pinned.length : i; };
+    const tile = (a) => {
+      const img = h('img', 'ap-ico');
+      img.loading = 'lazy';
+      img.decoding = 'async';
+      img.alt = '';
+      const src = `${API}/apps/icon?id=${encodeURIComponent(a.id)}`;
+      img.src = src;
+      // The first conversion of an icon can outlast the request on a busy computer; show the initial, try once more later.
+      img.addEventListener('error', () => {
+        const letter = h('span', 'ap-ico ap-letter', a.name.slice(0, 1).toUpperCase());
+        img.replaceWith(letter);
+        setTimeout(() => {
+          if (!letter.isConnected) return;
+          const again = h('img', 'ap-ico');
+          again.alt = '';
+          again.addEventListener('load', () => { if (letter.isConnected) letter.replaceWith(again); }, { once: true });
+          again.src = src + '&retry=1';
+        }, 15_000);
+      }, { once: true });
+      const isArmed = armed === a.id;
+      const t = h('button', 'ap-tile' + (busy === a.id ? ' busy' : '') + (isArmed ? ' armed' : ''), img,
+        h('span', 'ap-name', isArmed ? 'Tap again to open' : a.name));
+      t.title = a.name;
+      t.addEventListener('click', () => {
+        if (!confirm || armed === a.id) { clearTimeout(armTimer); armed = null; open(a); return; }
+        haptic();
+        armed = a.id;
+        clearTimeout(armTimer);
+        armTimer = setTimeout(disarm, 4000);
+        render(true);
+      });
+      return t;
+    };
+    const render = (force = false) => {
+      const all = data?.apps || [];
+      const items = all.filter((a) => !q || a.name.toLowerCase().includes(q))
+        .sort((x, y) => rank(x) - rank(y) || x.name.localeCompare(y.name));
+      const key = JSON.stringify([items.map((a) => a.id), busy, armed, data?.supported, data?.canOpen]);
+      if (!force && key === lastKey) return;
+      lastKey = key;
+      head.querySelector('.ap-count').textContent = all.length ? ` ${q ? items.length + '/' : ''}${all.length}` : '';
+      if (!data) { grid.replaceChildren(h('div', 'empty', 'Loading…')); return; }
+      if (!data.supported) { grid.replaceChildren(h('div', 'empty', 'The apps list is available on macOS for now')); return; }
+      if (!items.length) { grid.replaceChildren(h('div', 'empty', q ? `No apps match "${search.value.trim()}"` : 'No apps found')); return; }
+      grid.replaceChildren(...items.map(tile));
+    };
+    const tick = every(60_000, async () => { const ok = await load(); render(); return ok; }, 5000);
+    return { update: () => { tick(); render(); } };
+  },
+};
+
 // Upcoming events from the calendars set up in the agent (ICS feeds). Small: the current / next event; larger: a
 // list grouped by day, with the event that is happening now highlighted.
 W.agenda = {
@@ -279,7 +362,11 @@ W.agenda = {
     const render = () => {
       const cal = D.calendar;
       const now = Date.now();
-      const until = new Date(new Date().toDateString()).getTime() + days * 864e5;
+      const today = new Date(now);
+      // Whole days follow the local calendar even when the clocks change, also where a day starts at 01:00 because
+      // its midnight is skipped (Santiago): the end is built from the date, not moved on from today's start.
+      const wholeDays = Math.floor(days);
+      const until = new Date(today.getFullYear(), today.getMonth(), today.getDate() + wholeDays).getTime() + (days - wholeDays) * 864e5;
       const list = (cal?.events || []).filter((e) => e.end > now && e.start < until && (!only.length || only.includes(e.calendar.toLowerCase())));
       const small = box.clientHeight < 110;
       const key = JSON.stringify([list.map((e) => e.start + e.title), Math.floor(now / 30000), small, box.clientHeight]);

@@ -17,7 +17,7 @@ INSTALLER = pathlib.Path(__file__).resolve().parents[1] / 'scripts/install.sh'
 
 
 class InstallerTests(unittest.TestCase):
-    def run_installer(self, serial=None, fail=False):
+    def run_installer(self, serial=None, fail=False, newer_sources=False):
         with tempfile.TemporaryDirectory(prefix='phonebox installer ') as directory:
             root = pathlib.Path(directory)
             repo = root / 'repo'
@@ -26,6 +26,20 @@ class InstallerTests(unittest.TestCase):
             shutil.copyfile(INSTALLER, repo / 'scripts/install.sh')
             apk = repo / 'dist/PhoneBox-fixture.apk'
             apk.write_bytes(b'installer test fixture')
+            if newer_sources:
+                android = repo / 'android'
+                source = android / 'app/src/main/AndroidManifest.xml'
+                source.parent.mkdir(parents=True)
+                source.write_text('<manifest/>', encoding='utf-8')
+                os.utime(apk, (1, 1))
+                (android / 'gradlew').write_text(
+                    '#!/bin/sh\n'
+                    'mkdir -p app/build/outputs/apk/release\n'
+                    'printf %s built > app/build/outputs/apk/release/app-release.apk\n',
+                    encoding='utf-8',
+                )
+                apk = android / 'app/build/outputs/apk/release/app-release.apk'
+
             commands = root / 'bin'
             commands.mkdir()
 
@@ -85,6 +99,12 @@ print('Success')
             ['install', '-r', apk],
             ['shell', 'am', 'start', '-n', 'net.oxog.phonebox.deskpanel/.MainActivity'],
         ], result.stdout + result.stderr)
+
+    def test_newer_android_sources_are_built_before_install(self):
+        result, calls, apk = self.run_installer(newer_sources=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('Building the APK', result.stdout)
+        self.assertEqual(calls[0], ['install', '-r', apk])
 
     def test_failed_update_preserves_app_without_uninstall_or_launch(self):
         result, calls, apk = self.run_installer(serial='fixture-device', fail=True)

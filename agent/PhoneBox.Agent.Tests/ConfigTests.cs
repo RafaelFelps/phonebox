@@ -136,6 +136,8 @@ public class LanTests
     [InlineData("/api/state", true)]
     [InlineData("/api/stream", true)]
     [InlineData("/api/run/terminal", true)]
+    [InlineData("/api/apps", true)]
+    [InlineData("/api/apps/open", true)]
     [InlineData("/api/push/temperature", true)]
     [InlineData("/api/settings", false)]
     [InlineData("/api/pair", false)]

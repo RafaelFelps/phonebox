@@ -48,10 +48,12 @@ W.progress = {
         if (now.getMinutes() === shown) return;
         shown = now.getMinutes();
         const day0 = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const day1 = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
         const wk0 = new Date(day0); wk0.setDate(day0.getDate() - ((day0.getDay() + 6) % 7));
+        const wk1 = new Date(wk0); wk1.setDate(wk0.getDate() + 7);
         const m0 = new Date(now.getFullYear(), now.getMonth(), 1), m1 = new Date(now.getFullYear(), now.getMonth() + 1, 1);
         const y0 = new Date(now.getFullYear(), 0, 1), y1 = new Date(now.getFullYear() + 1, 0, 1);
-        const vals = [(now - day0) / 864e5, (now - wk0) / (7 * 864e5), (now - m0) / (m1 - m0), (now - y0) / (y1 - y0)];
+        const vals = [(now - day0) / (day1 - day0), (now - wk0) / (wk1 - wk0), (now - m0) / (m1 - m0), (now - y0) / (y1 - y0)];
         vals.forEach((v, i) => { rows[i].pct.textContent = (v * 100).toFixed(i === 3 ? 1 : 0) + '%'; rows[i].bar.style.width = v * 100 + '%'; });
       },
     };

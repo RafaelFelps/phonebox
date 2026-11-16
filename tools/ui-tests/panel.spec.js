@@ -65,6 +65,23 @@ test('every widget in the catalogue builds and runs without errors', async ({ pa
   expect(errors).toEqual([]);
 });
 
+test('a chart whose metrics are all unknown falls back to cpu instead of failing', async ({ page }) => {
+  const errors = watchErrors(page);
+  await page.goto('/panel/');
+  await page.evaluate(() => {
+    const cfg = JSON.parse(localStorage.getItem('pb-demo-config') || 'null') || {};
+    const pages = [{ id: 'p1', title: 'One', icon: '📊', enabled: true,
+      widgets: [{ id: 'c1', type: 'chart', x: 0, y: 0, w: 4, h: 3, options: { metrics: ['nosuchmetric'] } }] }];
+    localStorage.setItem('pb-demo-config', JSON.stringify({ ...cfg, pages, shortcuts: cfg.shortcuts || [] }));
+  });
+  await page.reload();
+  const card = page.locator('.w-chart');
+  await expect(card.locator('canvas')).toBeVisible();
+  await expect(card.locator('.s-label')).toHaveText('Processor');
+  expect(await page.locator('.w > .empty').count()).toBe(0);
+  expect(errors).toEqual([]);
+});
+
 test('keys flip pages and the overview jumps to a page', async ({ page }) => {
   await page.goto('/panel/');
   await expect(page.locator('.w').first()).toBeVisible();

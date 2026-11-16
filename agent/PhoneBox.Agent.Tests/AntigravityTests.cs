@@ -164,6 +164,23 @@ public sealed class AntigravityTests
     }
 
     [Fact]
+    public async Task InvalidSummaryStillUsesTheMeasuredLegacyResponse()
+    {
+        using var http = new HttpClient(new Handler((request, _) =>
+            Task.FromResult(request.RequestUri!.Segments.Last() == "RetrieveUserQuotaSummary"
+                ? JsonResponse("<not an RPC response>")
+                : JsonResponse("""
+                    {"userStatus":{"planStatus":{"planInfo":{"planName":"Ultra"}},
+                    "cascadeModelConfigData":{"clientModelConfigs":[{"label":"Gemini",
+                    "quotaInfo":{"remainingFraction":0.25}}]}}}
+                    """))));
+        var provider = await QuotaMonitor.ReadAntigravityAsync(http, [(18765, "test-token")], CancellationToken.None);
+        Assert.NotNull(provider);
+        Assert.Equal("Ultra", provider.Plan);
+        Assert.Equal(75, Assert.Single(provider.Limits).Percent);
+    }
+
+    [Fact]
     public async Task PlanFailureDoesNotDiscardMeasuredSummary()
     {
         using var http = new HttpClient(new Handler((request, _) =>

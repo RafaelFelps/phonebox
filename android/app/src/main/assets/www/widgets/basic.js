@@ -266,7 +266,9 @@ W.gauge = {
 W.chart = {
   needs: ['state'],
   create(box, { o }) {
-    const keys = (Array.isArray(o.metrics) && o.metrics.length ? o.metrics : ['cpu']).filter((k) => METRICS[k]);
+    // a list of only unknown names falls back like no list at all; own keys only, so "constructor" is unknown too
+    const keys = (Array.isArray(o.metrics) && o.metrics.length ? o.metrics : ['cpu']).filter((k) => Object.prototype.hasOwnProperty.call(METRICS, k));
+    if (!keys.length) keys.push('cpu');
     const single = keys.length === 1 ? METRICS[keys[0]] : null;
     const isNet = keys.every((k) => k === 'down' || k === 'up');
     const label = single ? single.name : isNet ? 'Network' : keys.map((k) => METRICS[k].name).join(' · ');
@@ -973,8 +975,19 @@ W.pomodoro = {
 W.countdown = {
   needs: ['tick'],
   create(box, { o }) {
-    const m = String(o.target || '').match(/^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{1,2}):(\d{2}))?/);
-    const target = m ? new Date(+m[1], +m[2] - 1, +m[3], +(m[4] || 0), +(m[5] || 0)).getTime() : NaN;
+    const m = String(o.target || '').trim().match(/^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{1,2}):(\d{2})(?::\d{2})?)?$/);
+    let target = NaN;
+    if (m) {
+      const [, year, month, day, hour = '0', minute = '0'] = m;
+      const date = new Date(0);
+      date.setFullYear(+year, +month - 1, +day);
+      date.setHours(+hour, +minute, 0, 0);
+      if (date.getFullYear() === +year && date.getMonth() === +month - 1 &&
+          date.getDate() === +day && +hour < 24 && +minute < 60) {
+        // the time is checked as numbers: one the clocks skip (spring forward) still counts, moved on like before
+        target = date.getTime();
+      }
+    }
     const big = h('div', 'cd-v'), sub = h('div', 'cd-s');
     box.append(h('div', 'cd-l', o.label || 'Countdown'), big, sub);
     if (Number.isNaN(target)) { big.textContent = '—'; sub.textContent = t('w.setDateFormat'); return {}; }

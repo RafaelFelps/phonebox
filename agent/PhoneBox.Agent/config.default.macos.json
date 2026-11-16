@@ -12,6 +12,8 @@
 
   // Ping target for the ping metric and the "ping high" rule, every 5 s (empty = off)
   "ping": { "host": "1.1.1.1" },
+  // Discord widget: talks to the Discord desktop app on this computer. Create an application at discord.com/developers/applications, add the redirect http://localhost under OAuth2, and enter its client ID and secret in Settings › General › Discord
+  "discord": { "enabled": false, "clientId": null, "clientSecret": null },
 
   // Night mode: between these times the screen dims and only the clock stays. Tap to wake it for 30 s.
   "night": { "enabled": true, "start": "00:30", "end": "07:30", "brightness": 0.02 },

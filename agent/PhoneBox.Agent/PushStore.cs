@@ -39,8 +39,19 @@ public sealed partial class PushStore
         try
         {
             if (File.Exists(_dataPath))
-                foreach (var (k, v) in JsonSerializer.Deserialize<Dictionary<string, PushItem>>(File.ReadAllText(_dataPath)) ?? [])
-                    if (ValidKey(k)) _items[k] = v;
+            {
+                using var doc = JsonDocument.Parse(File.ReadAllText(_dataPath));
+                if (doc.RootElement.ValueKind == JsonValueKind.Object)
+                    // one record at a time: a damaged one (a null time, a wrong type) must not take the others with it
+                    foreach (var p in doc.RootElement.EnumerateObject())
+                    {
+                        if (!ValidKey(p.Name) || p.Value.ValueKind != JsonValueKind.Object) continue;
+                        PushItem? v;
+                        try { v = p.Value.Deserialize<PushItem>(); }
+                        catch (JsonException) { continue; }
+                        if (v is not null && v.Data.ValueKind != JsonValueKind.Undefined) _items[p.Name] = v with { Data = v.Data.Clone() };
+                    }
+            }
         }
         catch (Exception ex) { log.LogWarning("could not read {Path}: {Msg}", _dataPath, ex.Message); }
     }
@@ -133,7 +144,12 @@ public sealed partial class PushStore
 
     private void Changed()
     {
-        Interlocked.Exchange(ref _version, Math.Max(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), Interlocked.Read(ref _version) + 1));
+        var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        long previous;
+        do
+        {
+            previous = Interlocked.Read(ref _version);
+        } while (Interlocked.CompareExchange(ref _version, Math.Max(now, previous + 1), previous) != previous);
         if (Interlocked.Exchange(ref _savePending, 1) == 0) _saveTimer.Change(2000, Timeout.Infinite); // at most one write per 2 s, never postponed
     }
 

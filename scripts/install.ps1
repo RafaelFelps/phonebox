@@ -3,8 +3,8 @@
   Installs (or updates) PhoneBox on this computer and, optionally, on the connected phone.
 
 .DESCRIPTION
-  1. Stops a running agent.
-  2. Publishes the agent to %LOCALAPPDATA%\PhoneBox\app (settings in %APPDATA%\PhoneBox are kept).
+  1. Publishes the agent to a temporary staging folder.
+  2. Stops a running agent and installs the staged build in %LOCALAPPDATA%\PhoneBox\app.
   3. Optionally adds a Start-with-Windows shortcut.
   4. Optionally installs the panel APK on the connected phone: the newest of dist\ and the last build, rebuilt
      first when the app's sources are newer (or with -BuildApk).
@@ -26,15 +26,28 @@ $root = Split-Path $PSScriptRoot
 $app = Join-Path $env:LOCALAPPDATA 'PhoneBox\app'
 $exe = Join-Path $app 'PhoneBoxAgent.exe'
 
-Write-Host '==> Stopping running agent'
-Get-Process PhoneBoxAgent, DeskAgent -ErrorAction SilentlyContinue | Stop-Process -Force
-Start-Sleep -Milliseconds 500
-
-Write-Host "==> Publishing agent to $app"
 if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) { throw '.NET 10 SDK is required: winget install Microsoft.DotNet.SDK.10' }
-dotnet publish (Join-Path $root 'agent\PhoneBox.Agent') -c Release -f net10.0-windows10.0.19041.0 -o $app --nologo -v q --disable-build-servers
-if ($LASTEXITCODE) { throw "dotnet publish failed (exit code $LASTEXITCODE); the installed agent was not updated" }
-if (-not (Test-Path $exe)) { throw "publish failed: $exe not found" }
+$stage = Join-Path ([IO.Path]::GetTempPath()) ('phonebox-publish-' + [guid]::NewGuid().ToString('N'))
+try {
+    Write-Host '==> Publishing agent'
+    dotnet publish (Join-Path $root 'agent\PhoneBox.Agent') -c Release -f net10.0-windows10.0.19041.0 -o $stage --nologo -v q --disable-build-servers
+    if ($LASTEXITCODE) { throw "dotnet publish failed (exit code $LASTEXITCODE); the installed agent was not updated" }
+    if (-not (Test-Path -LiteralPath (Join-Path $stage 'PhoneBoxAgent.exe') -PathType Leaf)) {
+        throw 'publish failed: staged agent executable not found'
+    }
+
+    Write-Host '==> Stopping running agent'
+    Get-Process PhoneBoxAgent, DeskAgent -ErrorAction SilentlyContinue | Stop-Process -Force
+    Start-Sleep -Milliseconds 500
+
+    Write-Host "==> Installing to $app"
+    New-Item -ItemType Directory -Path $app -Force | Out-Null
+    foreach ($entry in (Get-ChildItem -LiteralPath $stage -Force)) {
+        Copy-Item -LiteralPath $entry.FullName -Destination $app -Recurse -Force
+    }
+} finally {
+    Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue
+}
 
 # Leftover shortcut from the pre-PhoneBox "DeskAgent" prototype.
 $startup = [Environment]::GetFolderPath('Startup')

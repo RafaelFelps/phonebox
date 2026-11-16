@@ -8,6 +8,46 @@
   [Seyamalam](https://github.com/Seyamalam)).
 - On a WorkBuddy permission request, the card shows the name WorkBuddy gave the workspace instead of its timestamp
   folder name (#111, [4gui](https://github.com/4gui)). The guide explains how to add the hook to WorkBuddy.
+- Calendars follow RFC 5545 more closely:
+  - a monthly rule with both a weekday and a month day ("Friday the 13th", a Mother's Day rule) keeps only the days
+    that match both, instead of every such weekday (#119);
+  - an alarm's `DURATION` or `SUMMARY` no longer replaces the event's own (#123);
+  - a local time that happens twice when the clocks go back means the first one (#126). All by [rudycelekli](https://github.com/rudycelekli).
+- A rule's time window with a typo (`08:30-typo`, three parts, a day-long end) is rejected instead of firing for a
+  minute (#114, [rudycelekli](https://github.com/rudycelekli)).
+- Pushed values: one damaged record in `data.json` no longer breaks the panel's state or discards the other values
+  (#115), and versions keep increasing under concurrent writes (#121). By [rudycelekli](https://github.com/rudycelekli).
+- The Antigravity quota falls back to the older status call when the summary can't be read (#122, [rudycelekli](https://github.com/rudycelekli)).
+- The network speed reads each adapter on its own, so a dock, a Wi-Fi reconnect or a counter reset no longer shows a
+  spike or a zero (#124, [rudycelekli](https://github.com/rudycelekli)).
+
+**Panel**
+- **Discord** widget: the voice channel you are in, mute, deafen, leave and join, the voice channels of your servers
+  and your Discord notifications. It talks to the Discord app on the computer, needs your own Discord application
+  (see [docs/DISCORD.md](docs/DISCORD.md)), is off by default, and the controls and notifications are each a widget
+  option (#112, [bhuwan1321](https://github.com/bhuwan1321)).
+- The panel works on phones whose system WebView is stuck on Chromium 83 (it stayed black), and the permission prompt
+  shows there too. An approval that arrives while the live stream reconnects is no longer lost, an answer that
+  didn't reach the computer can be given again, and the prompt is shown above the night screen (#110,
+  [4gui](https://github.com/4gui)).
+- **All apps** widget (macOS): browse the computer's applications with their icons and open one with two taps. Opening
+  works only while the widget is on a page that is shown (#63, [d4rk-lucif3r](https://github.com/d4rk-lucif3r)).
+- The Agenda's window ends at local midnight also on days the clocks change, including where midnight itself is
+  skipped (#135); Time Progress stays right on those days (#133); a Countdown with an impossible date such as
+  February 31 shows a dash instead of a date in March (#132); Air quality with no index shows "unavailable" instead of
+  0 (#134). All by [rudycelekli](https://github.com/rudycelekli).
+- A chart whose metrics are all unknown shows the CPU instead of an error card (#125,
+  [Seyamalam](https://github.com/Seyamalam)).
+- A Smart Stack's timer and alarm keep running and ring while the stack shows another card or another page is on
+  screen (#130, [rudycelekli](https://github.com/rudycelekli)).
+
+**Install and packaging**
+- `scripts/install.sh --apk` rebuilds the APK when the Android sources are newer than `dist/` (#113), and Linux
+  and macOS autostart files quote paths with spaces and special characters (#118).
+- `scripts/install.ps1` builds into a temporary folder and stops the running agent only after the build succeeded
+  (#120); `scripts/build.ps1` removes its per-platform staging folders (#127).
+- The winget release-notes link moved to the locale manifest, where winget reads it (#128).
+- The docs demo keeps a layout saved while its catalog loads (#129). All by [rudycelekli](https://github.com/rudycelekli).
 
 ## 0.9.12 — 2026-11-16
 

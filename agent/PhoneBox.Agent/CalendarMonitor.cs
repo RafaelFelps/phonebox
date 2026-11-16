@@ -100,11 +100,16 @@ public static class Ics
     {
         var events = new List<List<Prop>>();
         List<Prop>? cur = null;
+        var nestedDepth = 0;
         foreach (var line in Unfold(text))
         {
-            if (line == "BEGIN:VEVENT") { cur = []; continue; }
+            if (line == "BEGIN:VEVENT") { cur = []; nestedDepth = 0; continue; }
             if (line == "END:VEVENT") { if (cur is not null) events.Add(cur); cur = null; continue; }
             if (cur is null) continue;
+            // VALARM can have its own DURATION and other event-like properties.
+            if (line.StartsWith("BEGIN:", StringComparison.OrdinalIgnoreCase)) { nestedDepth++; continue; }
+            if (line.StartsWith("END:", StringComparison.OrdinalIgnoreCase)) { nestedDepth = Math.Max(0, nestedDepth - 1); continue; }
+            if (nestedDepth > 0) continue;
             var p = ParseLine(line);
             if (p is not null) cur.Add(p);
         }
@@ -250,20 +255,28 @@ public static class Ics
     {
         var m = new DateTime(first.Year, first.Month, 1).AddMonths(months);
         var days = DateTime.DaysInMonth(m.Year, m.Month);
+        int MonthDay(int day) => day > 0 ? day : days + day + 1;
         if (byDay.Count > 0)
         {
             foreach (var (nth, day) in byDay)
             {
                 var all = Enumerable.Range(1, days).Select(d => m.AddDays(d - 1)).Where(d => d.DayOfWeek == day).ToList();
-                if (nth == 0) foreach (var d in all) yield return d + first.TimeOfDay;
-                else if (nth > 0 && nth <= all.Count) yield return all[nth - 1] + first.TimeOfDay;
-                else if (nth < 0 && -nth <= all.Count) yield return all[all.Count + nth] + first.TimeOfDay;
+                IEnumerable<DateTime> matching = nth switch
+                {
+                    0 => all,
+                    > 0 when nth <= all.Count => [all[nth - 1]],
+                    < 0 when nth >= -all.Count => [all[all.Count + nth]],
+                    _ => [],
+                };
+                foreach (var d in matching)
+                    if (byMonthDay.Count == 0 || byMonthDay.Any(md => MonthDay(md) == d.Day))
+                        yield return d + first.TimeOfDay;
             }
             yield break;
         }
         foreach (var md in byMonthDay.Count > 0 ? byMonthDay : [first.Day])
         {
-            var d = md > 0 ? md : days + md + 1;
+            var d = MonthDay(md);
             if (d >= 1 && d <= days) yield return m.AddDays(d - 1) + first.TimeOfDay;
         }
     }
@@ -301,6 +314,9 @@ public static class Ics
     {
         local = DateTime.SpecifyKind(local, DateTimeKind.Unspecified);
         if (zone.IsInvalidTime(local)) local = local.AddHours(1); // skipped by a DST change
+        // iCalendar selects the earlier instant when the same wall-clock time occurs twice.
+        if (zone.IsAmbiguousTime(local))
+            return new DateTimeOffset(local, zone.GetAmbiguousTimeOffsets(local).Max()).UtcDateTime;
         return TimeZoneInfo.ConvertTimeToUtc(local, zone);
     }
 

@@ -50,6 +50,7 @@ builder.Services.ConfigureHttpJsonOptions(o => o.SerializerOptions.PropertyNamin
 builder.Services.AddSingleton(configStore);
 builder.Services.AddSingleton(endpoint);
 builder.Services.AddSingleton<AudioControl>();
+builder.Services.AddSingleton<AppCatalog>();
 builder.Services.AddSingleton<PairingCodes>();
 builder.Services.AddSingleton<SpotifyControl>();
 builder.Services.AddSingleton<ControlDeck>();
@@ -720,6 +721,22 @@ app.MapGet("/api/procs/icon", (string name, ProcessMonitor procs) =>
     procs.Icon(name) is { } png ? Results.File(png, "image/png") : Results.NotFound());
 
 app.MapGet("/api/procs/detail", (string name, ProcessMonitor procs) => Results.Json(procs.Detail(name)));
+
+// All apps widget: the installed applications, their icons, and opening one by id (never by path).
+app.MapGet("/api/apps", (AppCatalog apps) => Results.Json(new
+{
+    supported = AppCatalog.Supported,
+    canOpen = AppCatalog.Supported && apps.OpenAllowed(),
+    apps = apps.List().Select(a => new { id = a.Id, name = a.Name }),
+}));
+app.MapGet("/api/apps/icon", async (string id, AppCatalog apps, HttpResponse res, CancellationToken ct) =>
+{
+    if (await apps.IconAsync(id, ct) is not { } png) return Results.NotFound();
+    res.Headers.CacheControl = "private, max-age=86400"; // icons do not change; the phone may keep them
+    return Results.File(png, "image/png");
+});
+app.MapPost("/api/apps/open", (string id, AppCatalog apps) =>
+    apps.Open(id) is { } error ? Results.BadRequest(new { error }) : Results.Ok(new { ok = true }));
 
 // ?name=X ends every instance of X; ?pid=N ends one process together with its children.
 app.MapPost("/api/procs/kill", (string? name, int? pid, ProcessMonitor procs, ConfigStore cfg) =>

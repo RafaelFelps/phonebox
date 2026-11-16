@@ -102,13 +102,14 @@ W.stack = {
           console.warn(`stack: error creating child ${item.type}`, err);
           subBox.replaceChildren(h('div', 'empty', `${item.type}: ${err.message}`));
         }
-        // a child can narrow its needs for its options (a clock without the weather line)
-        for (const need of inst.needs || def.needs || []) collectedNeeds.add(need);
       } else {
         subBox.replaceChildren(h('div', 'empty', `Unknown widget: ${item.type}`));
       }
 
-      children.push({ item, def, inst, el: itemEl });
+      // Children can narrow their needs for their current options.
+      const needs = inst.needs || def?.needs || [];
+      for (const need of needs) collectedNeeds.add(need);
+      children.push({ item, inst, needs, always: inst.always ?? def?.always, el: itemEl });
     });
 
     let currentIndex = 0;
@@ -173,7 +174,7 @@ W.stack = {
         });
       }
 
-      for (const need of nextChild.def?.needs || []) {
+      for (const need of nextChild.needs) {
         try { nextChild.inst.update?.(need); } catch (_) {}
       }
     }
@@ -281,12 +282,13 @@ W.stack = {
 
     return {
       needs: Array.from(collectedNeeds),
+      always: children.some(child => child.always),
       /**
        * Handles periodic tick and widget data updates for the stack and its children.
        */
-      update(kind) {
+      update(kind, background) {
         if (destroyed) return;
-        if (kind === 'tick') {
+        if (kind === 'tick' && !background) {
           const r = box.getBoundingClientRect();
           const visible = r.right > 0 && r.left < innerWidth && r.bottom > 0 && r.top < innerHeight && !document.hidden;
           const activeChildEl = children[currentIndex]?.el;
@@ -297,7 +299,7 @@ W.stack = {
           }
         }
         for (const child of children) {
-          if (child.def?.needs?.includes(kind)) {
+          if ((!background || child.always) && child.needs.includes(kind)) {
             try { child.inst.update?.(kind); } catch (e) { console.warn(child.item.type, e); }
           }
         }

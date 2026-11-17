@@ -1145,6 +1145,14 @@ body.waking::after { opacity: 0; pointer-events: auto; transition: opacity .2s e
 .st-ach-head { display: flex; justify-content: space-between; margin-top: 6px; font-size: 13px; font-weight: 600; }
 .st-bar { height: 6px; border-radius: 6px; background: rgba(255,255,255,.1); overflow: hidden; }
 .st-bar i { display: block; height: 100%; background: linear-gradient(90deg, #1a9fff, #66c0f4); border-radius: 6px; }
+.st-dl .st-bar i { transition: width 2.8s linear; }
+.st-bar.busy i { width: 35%; animation: st-busy 1.4s ease-in-out infinite; }
+@keyframes st-busy { from { transform: translateX(-100%); } to { transform: translateX(290%); } }
+.st-upd-btn { flex: none; border: 0; border-radius: 8px; padding: 7px 12px; background: linear-gradient(90deg, #47bfff, #1a44c2); color: #fff; font: inherit; font-size: 12.5px; font-weight: 700; }
+.st-upd-btn:disabled { opacity: .5; }
+.st-card { position: relative; }
+.st-card-upd { position: absolute; top: 6px; right: 6px; padding: 1px 7px; border-radius: 999px; background: #f59e0bdd; color: #1b1300; font-size: 10.5px; font-weight: 800; }
+.st-play-upd { margin-top: 8px; background: linear-gradient(90deg, #f5b041, #d9730d); }
 .st-ach-icons { display: flex; gap: 6px; margin-top: 4px; }
 .st-ach-ico { width: 32px; height: 32px; border-radius: 6px; background: #1b2838; }
 .st-ach-last { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

@@ -7,14 +7,18 @@ namespace PhoneBox.Agent;
 public sealed record SteamNow(long AppId, string Name, long Since, int? Players);
 public sealed record SteamAchievement(string Name, string? Description, string? Icon, long UnlockedAt);
 public sealed record SteamAchievements(long AppId, string Game, int Done, int Total, IReadOnlyList<SteamAchievement> Recent, IReadOnlyList<SteamAchievement> Next);
-/// <param name="Phase">downloading, installing or queued</param>
+/// <param name="Phase">downloading, installing, verifying, preparing, paused or queued</param>
 public sealed record SteamDownload(long AppId, string Name, double Progress, long Done, long Total, double? BytesPerSec, string Phase);
+
+/// <summary>An installed game with a newer build that Steam has not started on.</summary>
+public sealed record SteamUpdate(long AppId, string Name, long SizeBytes);
 /// <param name="State">0 offline, 1 online, 2 busy, 3 away, 4 snooze, 5 looking to trade, 6 looking to play</param>
 public sealed record SteamFriend(string Id, string Name, string? Avatar, int State, string? Game, long? GameId, long? LastOff);
 public sealed record SteamRecent(long AppId, string Name, long TwoWeeksMin, long TotalMin);
 public sealed record SteamNews(string Title, string Url, long Date, string? Feed, string Contents);
 public sealed record SteamSale(long AppId, string Name, int Discount, string Price, string? Was);
-public sealed record SteamLibraryItem(long AppId, string Name, long SizeBytes, long LastPlayed, long PlaytimeMin, bool Downloading);
+public sealed record SteamLibraryItem(long AppId, string Name, long SizeBytes, long LastPlayed, long PlaytimeMin, bool Downloading,
+    bool UpdateAvailable = false);
 
 /// <param name="Percent">Share of all players who have it (null when Steam does not say).</param>
 /// <param name="Hidden">A secret achievement: the description stays hidden until it is unlocked.</param>
@@ -24,14 +28,15 @@ public sealed record SteamAchievementItem(string Name, string? Description, stri
 /// <param name="AchievementsNote">Why the list is empty: no key, a private profile, or a game without achievements.</param>
 public sealed record SteamGameDetails(long AppId, string Name, bool Installed, long SizeBytes, bool Downloading, bool Playing,
     long LastPlayed, long PlaytimeMin, long TwoWeeksMin, int? Players, bool HasKey, string? AchievementsNote,
-    int Done, int Total, IReadOnlyList<SteamAchievementItem> Achievements);
+    int Done, int Total, IReadOnlyList<SteamAchievementItem> Achievements, bool UpdateAvailable = false);
 
 internal sealed record SteamSchemaEntry(string Name, string? Description, string? Icon, string? Gray, bool Hidden);
 
 /// <param name="Status">ok, not-installed (no Steam client found) or off (no Steam widget on a page)</param>
 public sealed record SteamSnapshot(string Status, string? Error, bool HasKey, bool ClientRunning, string? User, string? Avatar, int? State,
     SteamNow? Playing, SteamAchievements? Achievements, IReadOnlyList<SteamDownload> Downloads, IReadOnlyList<SteamFriend> Friends,
-    IReadOnlyList<SteamRecent> Recent, long? NewsApp, string? NewsGame, IReadOnlyList<SteamNews> News, IReadOnlyList<SteamSale> Sales, long Updated);
+    IReadOnlyList<SteamRecent> Recent, long? NewsApp, string? NewsGame, IReadOnlyList<SteamNews> News, IReadOnlyList<SteamSale> Sales, long Updated,
+    IReadOnlyList<SteamUpdate>? Updates = null);
 
 /// <summary>
 /// Steam on this computer and on the web. The client's own files give the installed games, downloads, play time and
@@ -57,6 +62,11 @@ public sealed class SteamMonitor(ConfigStore config, PushStore push, ILogger<Ste
     private readonly Dictionary<long, (long Bytes, long At)> _dlPrev = [];
     private readonly Dictionary<long, double> _dlSpeed = [];
     private HashSet<long> _wasDownloading = [];
+    private readonly SteamContentLog _contentLog = new();
+    // the manifest's downloaded bytes and when they last changed, and the bytes last shown (the bar never goes back)
+    private readonly Dictionary<long, (long Bytes, long At)> _acfDl = [];
+    private readonly Dictionary<long, (long Total, long Done)> _shown = [];
+    private List<SteamDownload> _downloads = [];
     private bool _gamesLoaded;
     private long _running, _runningSince;
     private bool _clientRunning;
@@ -109,12 +119,14 @@ public sealed class SteamMonitor(ConfigStore config, PushStore push, ILogger<Ste
                 playing = new(_running, NameOf(_running), _runningSince, _players.GetValueOrDefault(_running));
             else if (_webGame is { } wg && wg > 0)
                 playing = new(wg, _webGameName ?? NameOf(wg), _runningSince, _players.GetValueOrDefault(wg));
-            var downloads = _games.Where(g => g.Downloading).Select(Download).OrderByDescending(d => d.Phase == "downloading").ToList();
+            var downloads = _downloads;
             return new SteamSnapshot("ok", _error, !string.IsNullOrEmpty(cfg.Steam.ApiKey), _clientRunning, _user, _avatar, _state,
                 playing, _ach, downloads,
                 _friends.Where(f => f.State > 0).OrderByDescending(f => f.Game is not null).ThenBy(f => f.Name, StringComparer.OrdinalIgnoreCase)
                     .Concat(_friends.Where(f => f.State == 0).OrderByDescending(f => f.LastOff ?? 0)).ToList(),
-                _recent, _newsApp, _newsGame, _news, _sales, _updated);
+                _recent, _newsApp, _newsGame, _news, _sales, _updated,
+                _games.Where(g => g.UpdateAvailable).OrderBy(g => g.Name, StringComparer.OrdinalIgnoreCase)
+                    .Select(g => new SteamUpdate(g.AppId, g.Name, g.SizeBytes)).ToList());
         }
     }
 
@@ -127,7 +139,7 @@ public sealed class SteamMonitor(ConfigStore config, PushStore push, ILogger<Ste
             return _games.Select(g =>
             {
                 var p = _play.GetValueOrDefault(g.AppId);
-                return new SteamLibraryItem(g.AppId, g.Name, g.SizeBytes, p?.LastPlayed ?? 0, p?.PlaytimeMin ?? 0, g.Downloading);
+                return new SteamLibraryItem(g.AppId, g.Name, g.SizeBytes, p?.LastPlayed ?? 0, p?.PlaytimeMin ?? 0, g.Downloading, g.UpdateAvailable);
             }).OrderByDescending(g => g.LastPlayed).ThenBy(g => g.Name, StringComparer.OrdinalIgnoreCase).ToList();
     }
 
@@ -161,13 +173,44 @@ public sealed class SteamMonitor(ConfigStore config, PushStore push, ILogger<Ste
         return $"App {app}";
     }
 
-    private SteamDownload Download(SteamGame g)
+    /// <summary>
+    /// One game's download as the Steam window shows it. The manifest's byte count is only written now and then, so
+    /// between writes the bar moves at Steam's own download rate (from content_log.txt) and never goes backwards.
+    /// </summary>
+    private SteamDownload Download(SteamGame g, long now)
     {
-        var dlLeft = g.BytesToDownload > 0 && g.BytesDownloaded < g.BytesToDownload;
-        var stageLeft = g.BytesToStage > 0 && g.BytesStaged < g.BytesToStage;
-        var (done, total, phase) = dlLeft ? (g.BytesDownloaded, g.BytesToDownload, "downloading")
-            : stageLeft ? (g.BytesStaged, g.BytesToStage, "installing") : (0L, 0L, "queued");
-        var speed = _dlSpeed.TryGetValue(g.AppId, out var s) && phase == "downloading" ? s : (double?)null;
+        var log = _contentLog.Get(g.AppId);
+        var step = log?.Step ?? "";
+        var state = log?.State ?? "";
+        long dlTotal = g.BytesToDownload > 0 ? g.BytesToDownload : log?.DownloadTotal ?? 0;
+        long stTotal = g.BytesToStage > 0 ? g.BytesToStage : log?.StageTotal ?? 0;
+        var dlLeft = dlTotal > 0 && g.BytesDownloaded < dlTotal;
+        var stageLeft = stTotal > 0 && g.BytesStaged < stTotal;
+        var phase = state.Contains("Update Paused") ? "paused"
+            : step.Contains("Verifying") ? "verifying"
+            : step.Contains("Committing") ? "installing"
+            : step.Contains("Preallocating") || step.Contains("Reconfiguring") ? "preparing"
+            : step.Contains("Downloading") || (step.Length == 0 && dlLeft) ? "downloading"
+            : stageLeft ? "installing"
+            : "queued";
+        // waiting its turn in Steam's queue
+        if (state.Length > 0 && !state.Contains("Update Running") && phase != "paused") phase = "queued";
+
+        if (!_acfDl.TryGetValue(g.AppId, out var acf) || acf.Bytes != g.BytesDownloaded) _acfDl[g.AppId] = acf = (g.BytesDownloaded, now);
+        double? speed = null;
+        long done = 0, total = 0;
+        if (phase == "downloading" && dlTotal > 0)
+        {
+            var logRate = _contentLog.Rate > 0 && (DateTime.Now - _contentLog.RateAt).TotalSeconds < 75 ? _contentLog.Rate : (double?)null;
+            speed = logRate ?? (_dlSpeed.TryGetValue(g.AppId, out var sp) ? sp : null);
+            var est = acf.Bytes + (long)((speed ?? 0) * Math.Max(0, now - acf.At) / 1000);
+            total = dlTotal;
+            done = Math.Min(Math.Max(est, g.BytesDownloaded), dlTotal);
+            if (_shown.TryGetValue(g.AppId, out var prev) && prev.Total == total) done = Math.Max(done, prev.Done);
+            _shown[g.AppId] = (total, done);
+        }
+        else if (phase == "installing" && stTotal > 0) (done, total) = (Math.Min(g.BytesStaged, stTotal), stTotal);
+        else if (phase is "paused" or "queued" && dlTotal > 0) (done, total) = (Math.Min(g.BytesDownloaded, dlTotal), dlTotal);
         return new SteamDownload(g.AppId, g.Name, total > 0 ? Math.Round(done * 100.0 / total, 1) : 0, done, total, speed, phase);
     }
 
@@ -197,6 +240,7 @@ public sealed class SteamMonitor(ConfigStore config, PushStore push, ILogger<Ste
         var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         if (root is null) { lock (_lock) _root = null; return; }
         var games = SteamLocal.Games(root);
+        _contentLog.Read(root); // only this loop touches it
         var running = SteamLocal.RunningAppId();
         var client = SteamLocal.ClientRunning();
         var user = SteamLocal.User(root);
@@ -229,7 +273,10 @@ public sealed class SteamMonitor(ConfigStore config, PushStore push, ILogger<Ste
             if (_gamesLoaded)
                 finished.AddRange(games.Where(g => _wasDownloading.Contains(g.AppId) && !g.Downloading));
             _wasDownloading = downloading;
+            foreach (var id in _acfDl.Keys.Where(k => !downloading.Contains(k)).ToList()) { _acfDl.Remove(id); _shown.Remove(id); }
             _games = games;
+            _downloads = games.Where(g => g.Downloading).Select(g => Download(g, now))
+                .OrderByDescending(d => d.Phase is "downloading" or "verifying" or "installing" or "preparing").ToList();
             _gamesLoaded = true;
         }
         if (config.Get().Steam.NotifyDownloads)
@@ -569,7 +616,7 @@ public sealed class SteamMonitor(ConfigStore config, PushStore push, ILogger<Ste
             .Concat(items.Where(i => !i.Achieved).OrderByDescending(i => i.Percent ?? -1)).ToList();
         var details = new SteamGameDetails(app, NameOf(app), game is not null, game?.SizeBytes ?? 0, game?.Downloading ?? false, playing,
             play?.LastPlayed ?? 0, Math.Max(play?.PlaytimeMin ?? 0, recent?.TotalMin ?? 0), recent?.TwoWeeksMin ?? 0, players, hasKey, note,
-            items.Count(i => i.Achieved), items.Count, ordered);
+            items.Count(i => i.Achieved), items.Count, ordered, game?.UpdateAvailable ?? false);
         _details[app] = (details, now);
         return details;
     }
@@ -694,6 +741,21 @@ public sealed class SteamMonitor(ConfigStore config, PushStore push, ILogger<Ste
     {
         lock (_lock) if (!_games.Any(g => g.AppId == app)) return "That game is not installed";
         return Open($"steam://rungameid/{app}");
+    }
+
+    /// <summary>
+    /// Starts a pending update now. Steam has no "update" link, so this asks it to verify the game's files, which
+    /// brings the game to the newest build (Steam first re-reads the installed files, so big games take a while).
+    /// </summary>
+    public string? Update(long app)
+    {
+        lock (_lock)
+        {
+            var g = _games.FirstOrDefault(x => x.AppId == app);
+            if (g is null) return "That game is not installed";
+            if (g.Downloading) return "Steam is already updating it";
+        }
+        return Open($"steam://validate/{app}");
     }
 
     public string? SetStatus(string status) =>

@@ -162,8 +162,10 @@ public sealed class Vdf
 }
 
 /// <param name="Downloading">Steam is fetching or installing an update for it.</param>
+/// <param name="UpdateAvailable">Steam knows of a newer build that it has not started on (waiting for its schedule,
+/// or auto-update is off for the game).</param>
 public sealed record SteamGame(long AppId, string Name, long SizeBytes, string Library, bool Downloading,
-    long BytesToDownload, long BytesDownloaded, long BytesToStage, long BytesStaged, long LastUpdated);
+    long BytesToDownload, long BytesDownloaded, long BytesToStage, long BytesStaged, long LastUpdated, bool UpdateAvailable = false);
 
 public sealed record SteamPlay(long LastPlayed, long PlaytimeMin);
 
@@ -256,7 +258,9 @@ public static class SteamLocal
         long toDl = s.Long("BytesToDownload"), dl = s.Long("BytesDownloaded"), toStage = s.Long("BytesToStage"), staged = s.Long("BytesStaged");
         // 1024 = update running, 2 = update required, 1048576 = downloading; a pending byte count means work left
         var downloading = (flags & (1024 | 1048576)) != 0 || (toDl > 0 && dl < toDl) || (toStage > 0 && staged < toStage && (flags & 4) == 0);
-        return new SteamGame(id, name, s.Long("SizeOnDisk"), library, downloading, toDl, dl, toStage, staged, s.Long("LastUpdated"));
+        // 2 = update required; ScheduledAutoUpdate is the time Steam plans to start it (0 when none is pending)
+        var update = !downloading && (flags & 4) != 0 && ((flags & 2) != 0 || s.Long("ScheduledAutoUpdate") > 0);
+        return new SteamGame(id, name, s.Long("SizeOnDisk"), library, downloading, toDl, dl, toStage, staged, s.Long("LastUpdated"), update);
     }
 
     public static List<SteamGame> Games(string root)

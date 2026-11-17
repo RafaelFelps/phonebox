@@ -177,4 +177,49 @@ public sealed class SteamTests
     [InlineData("https://steamstatic.com.evil.example/x.jpg", false)]
     public void Fetches_images_only_from_steam(string url, bool allowed) =>
         Assert.Equal(allowed, SteamMonitor.SteamImageHost(new Uri(url)));
+
+    [Fact]
+    public void Sees_an_update_steam_has_not_started()
+    {
+        // installed (4) + update required (2), nothing downloaded yet: waiting for Steam's schedule
+        var waiting = Manifest.Replace("\"1026\"", "\"6\"").Replace("\"2000\"", "\"0\"").Replace("\"500\"", "\"0\"").Replace("\"3000\"", "\"0\"");
+        var g = SteamLocal.ParseManifest(Vdf.Parse(waiting), "x")!;
+        Assert.False(g.Downloading);
+        Assert.True(g.UpdateAvailable);
+
+        var current = waiting.Replace("\"6\"", "\"4\"");
+        Assert.False(SteamLocal.ParseManifest(Vdf.Parse(current), "x")!.UpdateAvailable);
+
+        var scheduled = current.Replace("\"SizeOnDisk\"", "\"ScheduledAutoUpdate\"\t\t\"1794900000\"\n\t\"SizeOnDisk\"");
+        Assert.True(SteamLocal.ParseManifest(Vdf.Parse(scheduled), "x")!.UpdateAvailable);
+
+        // already downloading: shown as a download, not as a pending update
+        Assert.False(SteamLocal.ParseManifest(Vdf.Parse(Manifest), "x")!.UpdateAvailable);
+    }
+
+    [Fact]
+    public void Follows_an_update_in_the_content_log()
+    {
+        var log = new SteamContentLog();
+        log.Feed("[2026-11-17 09:46:05] AppID 2406770 state changed : Update Required,Update Queued,Update Running,");
+        log.Feed("[2026-11-17 09:46:07] AppID 2406770 App update changed : Running Update,Verifying Installed,");
+        Assert.Equal("Running Update,Verifying Installed", log.Get(2406770)!.Step);
+
+        log.Feed("[2026-11-17 09:46:07] AppID 2406770 update started : download 0/66164575056, store 0/0, reuse 0/0, delta 0/0, stage 0/74623415803 ");
+        log.Feed("[2026-11-17 09:46:07] AppID 2406770 App update changed : Running Update,Downloading,Staging,");
+        log.Feed("[2026-11-17 10:07:37] Current download rate: 342.483 Mbps");
+        var app = log.Get(2406770)!;
+        Assert.Equal(66164575056, app.DownloadTotal);
+        Assert.Equal(74623415803, app.StageTotal);
+        Assert.Contains("Downloading", app.Step);
+        Assert.Contains("Update Running", app.State);
+        Assert.Equal(342.483e6 / 8, log.Rate, 3);
+        Assert.Equal(new DateTime(2026, 11, 17, 10, 7, 37), log.RateAt);
+
+        log.Feed("[2026-11-17 10:09:35] AppID 2406770 scheduler finished : removed from schedule (result No Error, state 0xc) ");
+        Assert.Null(log.Get(2406770));
+        // noise is ignored
+        log.Feed("[2026-11-17 10:10:30] HTTP/2 (SteamCache,460) - cache18: Connection has been idle for '61' seconds, closing");
+        log.Feed("garbage");
+    }
 }

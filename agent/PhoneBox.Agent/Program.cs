@@ -548,7 +548,10 @@ app.MapGet("/api/steam/img", async (string? u, SteamMonitor steam, ConfigStore c
 app.MapPost("/api/steam/launch/{app:long}", (long app, SteamMonitor steam, ConfigStore cfg) =>
     !SteamControl(cfg) ? Results.BadRequest(new { error = "Steam buttons are turned off in the widget's settings" })
     : steam.Launch(app) is { } error ? Results.BadRequest(new { error }) : Results.Ok(new { ok = true }));
-app.MapPost("/api/steam/status/{status}", (string status, SteamMonitor steam, ConfigStore cfg) =>
+app.MapPost("/api/steam/update/{app:long}", (long app, SteamMonitor steam, ConfigStore cfg) =>
+    !SteamControl(cfg) ? Results.BadRequest(new { error = "Steam buttons are turned off in the widget's settings" })
+    : steam.Update(app) is { } error ? Results.BadRequest(new { error }) : Results.Ok(new { ok = true }));
+app.MapPost("/api/steam/status/{status}",(string status, SteamMonitor steam, ConfigStore cfg) =>
     !SteamControl(cfg) ? Results.BadRequest(new { error = "Steam buttons are turned off in the widget's settings" })
     : steam.SetStatus(status) is { } error ? Results.BadRequest(new { error }) : Results.Ok(new { ok = true }));
 app.MapPost("/api/steam/open/{page}", (string page, SteamMonitor steam, ConfigStore cfg) =>

@@ -49,15 +49,43 @@ function message(box, s, needKey = false) {
   return null;
 }
 
+const lastPct = new Map();
+const PHASES = { downloading: 'Downloading', installing: 'Installing', verifying: 'Verifying files', preparing: 'Preparing', paused: 'Paused', queued: 'Queued' };
+
 function downloadRow(d) {
   const eta = d.bytesPerSec > 0 && d.total > d.done ? ` · ${shortDur(((d.total - d.done) / d.bytesPerSec) * 1000)} left` : '';
   const speed = d.bytesPerSec > 0 ? ` · ${bytes(d.bytesPerSec)}/s` : '';
-  const phase = d.phase === 'installing' ? 'Installing' : d.phase === 'queued' ? 'Queued' : 'Downloading';
-  const bar = h('div', 'st-bar', h('i'));
-  bar.firstChild.style.width = `${d.progress}%`;
+  const phase = PHASES[d.phase] || 'Downloading';
+  // Steam gives no byte count while it verifies or preallocates: a moving stripe instead of a stuck 0 %
+  const busy = !d.total && (d.phase === 'verifying' || d.phase === 'preparing');
+  const bar = h('div', 'st-bar' + (busy ? ' busy' : ''), h('i'));
+  // each poll builds a new bar: it starts where the last one was and slides to the new value
+  if (!busy) {
+    const i = bar.firstChild, from = lastPct.get(d.appId);
+    i.style.width = `${from ?? d.progress}%`;
+    if (from != null && from !== d.progress) requestAnimationFrame(() => requestAnimationFrame(() => { i.style.width = `${d.progress}%`; }));
+    lastPct.set(d.appId, d.progress);
+  }
   return h('div', 'st-dl', img(cover(d.appId, 'header'), 'st-dl-img'),
     h('div', 'st-dl-main', h('div', 'st-dl-name', d.name), bar,
-      h('div', 'st-dl-meta', `${phase} ${Math.round(d.progress)}%` + (d.total ? ` · ${bytes(d.done)} of ${bytes(d.total)}` : '') + speed + eta)));
+      h('div', 'st-dl-meta', (busy ? phase : `${phase} ${Math.round(d.progress)}%`) + (d.total ? ` · ${bytes(d.done)} of ${bytes(d.total)}` : '') + speed + eta)));
+}
+
+/** Asks Steam on the PC to update the game now (it verifies the files first, then downloads the new build). */
+async function startUpdate(appId, name) {
+  if (await post(`update/${appId}`, `Steam is checking ${name} and will update it`)) setTimeout(() => { sharedAt = 0; }, 1500);
+}
+
+/** A game with an update Steam has not started yet. */
+function updateRow(u, control) {
+  const main = h('div', 'st-dl-main', h('div', 'st-dl-name', u.name), h('div', 'st-dl-meta', 'Update available'));
+  const row = h('div', 'st-dl st-upd', img(cover(u.appId, 'header'), 'st-dl-img'), main);
+  if (control) {
+    const b = h('button', 'st-upd-btn', 'Update');
+    b.addEventListener('click', (e) => { e.stopPropagation(); b.disabled = true; startUpdate(u.appId, u.name).finally(() => { b.disabled = false; }); });
+    row.append(b);
+  }
+  return row;
 }
 
 // ================================================================ Now playing
@@ -69,7 +97,7 @@ W.steam = {
     box.classList.add('st');
     const render = () => {
       const s = data;
-      const k = JSON.stringify([s?.status, s?.user, s?.state, s?.playing, s?.achievements, s?.downloads, s?.error, s?.hasKey, box.clientWidth, box.clientHeight, Math.floor(Date.now() / 30000)]);
+      const k = JSON.stringify([s?.status, s?.user, s?.state, s?.playing, s?.achievements, s?.downloads, s?.updates, s?.error, s?.hasKey, box.clientWidth, box.clientHeight, Math.floor(Date.now() / 30000)]);
       if (k === key) return;
       key = k;
       const msg = message(box, s);
@@ -106,7 +134,8 @@ W.steam = {
         body.append(img(cover(app), 'st-cover', ''), info);
       } else body.append(h('div', 'empty', 'Not playing anything'));
       const parts = [head, body];
-      if (s.downloads?.length) parts.push(h('div', 'st-dls', ...s.downloads.slice(0, 2).map(downloadRow)));
+      const rows = [...(s.downloads || []).slice(0, 2).map(downloadRow), ...(s.updates || []).slice(0, Math.max(0, 2 - (s.downloads?.length || 0))).map((u) => updateRow(u, control))];
+      if (rows.length) parts.push(h('div', 'st-dls', ...rows));
       if (control) {
         const bar = h('div', 'st-actions');
         for (const [page, label] of [['friends', 'Friends'], ['library', 'Library'], ['downloads', 'Downloads'], ['bigpicture', 'Big Picture']]) {
@@ -186,6 +215,7 @@ function openGame(g, control) {
     const tags = [];
     if (d.playing) tags.push(h('span', 'st-tag live', 'Playing now'));
     if (d.downloading) tags.push(h('span', 'st-tag warn', 'Downloading'));
+    else if (d.updateAvailable) tags.push(h('span', 'st-tag warn', 'Update available'));
     tags.push(h('span', 'st-tag', d.installed ? `Installed${d.sizeBytes ? ' · ' + bytes(d.sizeBytes) : ''}` : 'Not installed'));
     const stats = h('div', 'st-stats',
       stat('Play time', d.playtimeMin ? hours(d.playtimeMin) : 'Never played'),
@@ -198,6 +228,11 @@ function openGame(g, control) {
       play.disabled = d.downloading;
       play.addEventListener('click', async () => { if (await post(`launch/${d.appId}`, `Starting ${d.name} on the PC…`)) dismiss(); });
       side.push(play);
+    }
+    if (control && d.installed && d.updateAvailable && !d.downloading) {
+      const upd = h('button', 'st-play st-play-upd', '⟳  Update on the PC');
+      upd.addEventListener('click', async () => { upd.disabled = true; await startUpdate(d.appId, d.name); d.updateAvailable = false; render(); });
+      side.push(upd, h('div', 'st-meta st-hint', 'Steam checks the game\'s files first, then downloads the update'));
     }
     info.replaceChildren(...side);
     // achievements
@@ -243,11 +278,12 @@ W['steam-library'] = {
     box.append(h('div', 'w-title', o.title || 'Steam library'), dls, grid);
     const render = () => {
       const msg = message(box, data);
-      const k = JSON.stringify([msg, games?.map((g) => [g.appId, g.downloading]), data?.downloads, o.sort, box.clientWidth]);
+      const k = JSON.stringify([msg, games?.map((g) => [g.appId, g.downloading]), data?.downloads, data?.updates, o.sort, box.clientWidth]);
       if (k === key) return;
       key = k;
       if (msg) { grid.replaceChildren(h('div', 'empty', msg)); dls.replaceChildren(); return; }
-      dls.replaceChildren(...(data.downloads || []).slice(0, 1).map(downloadRow));
+      const pending = new Set((data.updates || []).map((u) => u.appId));
+      dls.replaceChildren(...(data.downloads?.length ? data.downloads.slice(0, 1).map(downloadRow) : (data.updates || []).slice(0, 1).map((u) => updateRow(u, control))));
       if (!games) { grid.replaceChildren(h('div', 'empty', 'Loading…')); return; }
       if (!games.length) { grid.replaceChildren(h('div', 'empty', 'No games installed')); return; }
       const list = [...games];
@@ -256,6 +292,7 @@ W['steam-library'] = {
       grid.replaceChildren(...list.map((g) => {
         const card = h('button', 'st-card' + (g.downloading ? ' busy' : ''), img(cover(g.appId), 'st-card-img', g.name),
           h('div', 'st-card-name', g.name), h('div', 'st-card-meta', g.playtimeMin ? hours(g.playtimeMin) : 'Never played'));
+        if (!g.downloading && pending.has(g.appId)) card.append(h('span', 'st-card-upd', 'Update'));
         card.addEventListener('click', () => openGame(g, control));
         return card;
       }));

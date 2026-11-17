@@ -272,9 +272,11 @@ W.stack = {
     }, { passive: true });
 
     // Rotation timer
-    let intervalSec = Number(o.interval);
-    if (!Number.isFinite(intervalSec) || intervalSec < 3) intervalSec = 10;
-    if (intervalSec > 120) intervalSec = 120;
+    // 0 = only when swiped or a dot is tapped; anything else is 3 s to 10 minutes (unset: 10 s)
+    let intervalSec = o.interval === undefined || o.interval === null || o.interval === '' ? 10 : Number(o.interval);
+    if (!Number.isFinite(intervalSec)) intervalSec = 10;
+    else if (intervalSec > 0) intervalSec = Math.min(600, Math.max(3, intervalSec));
+    else intervalSec = 0;
 
     function resetTimer() {
       lastRotate = Date.now();
@@ -293,7 +295,7 @@ W.stack = {
           const visible = r.right > 0 && r.left < innerWidth && r.bottom > 0 && r.top < innerHeight && !document.hidden;
           const activeChildEl = children[currentIndex]?.el;
           if (!visible || paused) lastRotate = Date.now();
-          else if (Date.now() - lastRotate >= intervalSec * 1000 && !activeChildEl?.contains(document.activeElement)) {
+          else if (intervalSec > 0 && Date.now() - lastRotate >= intervalSec * 1000 && !activeChildEl?.contains(document.activeElement)) {
             goTo(currentIndex + 1, 'next');
             lastRotate = Date.now();
           }

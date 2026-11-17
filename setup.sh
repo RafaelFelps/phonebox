@@ -93,9 +93,15 @@ check_sum() { # check_sum file sums-file
   local name expected actual
   name="$(basename "$1")"
   expected="$(awk -v n="$name" '{ f = $2; sub(/^\*/, "", f); if (f == n) { print tolower($1); exit } }' "$2")"
-  [ -n "$expected" ] || die "$name is not listed in the release checksums; the download was not used."
+  if [ -z "$expected" ]; then
+    printf '%s\n' "$name is not listed in the release checksums." >&2
+    return 1
+  fi
   actual="$(sha256_of "$1" | tr 'A-F' 'a-f')"
-  [ "$actual" = "$expected" ] || die "$name does not match the release checksum (expected $expected, got $actual). The download was damaged or changed on the way; nothing was installed. Run setup again."
+  if [ "$actual" != "$expected" ]; then
+    printf '%s\n' "$name does not match the release checksum (expected $expected, got $actual)." >&2
+    return 1
+  fi
   ok "$name matches the release checksum"
 }
 
@@ -351,7 +357,7 @@ start_agent() {
 
 # ---- phone ------------------------------------------------------------------------------------------------------
 phone_help() {
-  info 'On the phone (Android 7.0 or later):'
+  info 'On the phone (Android 5.0 or later):'
   info '  1. Settings > About phone: tap "Build number" seven times to turn on Developer options.'
   info '  2. Settings > System > Developer options: turn on "USB debugging".'
   info '     Xiaomi / Redmi / POCO: also turn on "Install via USB" and "USB debugging (Security settings)".'
@@ -409,8 +415,8 @@ install_phone_app() { # install_phone_app apk serial -> 0 when installed
   local apk="$1" device="$2" level out
   level="$("$adb" -s "$device" shell getprop ro.build.version.sdk 2>/dev/null | tr -d '\r[:space:]')"
   case "$level" in ''|*[!0-9]*) level=0 ;; esac
-  if [ "$level" -gt 0 ] && [ "$level" -lt 24 ]; then
-    caution "This phone runs Android API $level; PhoneBox needs Android 7.0 (API 24) or later. The app was not installed."
+  if [ "$level" -gt 0 ] && [ "$level" -lt 21 ]; then
+    caution "This phone runs Android API $level; PhoneBox needs Android 5.0 (API 21) or later. The app was not installed."
     return 1
   fi
   info "Installing $(basename "$apk") on $device (the phone may ask you to confirm) ..."
@@ -499,7 +505,7 @@ main() {
   download "$base/SHA256SUMS-$ver.txt" "$sums" || die "release $ver was not found ($base)."
   info "$zip_name (about 45 MB) ..."
   download "$base/$zip_name" "$tmp/$zip_name" || die "the download failed: $base/$zip_name"
-  check_sum "$tmp/$zip_name" "$sums"
+  check_sum "$tmp/$zip_name" "$sums" || die "the agent download could not be verified. Nothing was installed."
   check_provenance "$tmp/$zip_name"
   unzip_to "$tmp/$zip_name" "$tmp/agent"
   chmod +x "$tmp/agent/PhoneBoxAgent"
@@ -585,9 +591,13 @@ main() {
       device="$(select_phone)"
       if [ -n "$device" ]; then
         apk="$tmp/PhoneBox-$ver.apk"
-        download "$base/PhoneBox-$ver.apk" "$apk" || die "the download failed: $base/PhoneBox-$ver.apk"
-        check_sum "$apk" "$sums"
-        if install_phone_app "$apk" "$device"; then phone_done=1; fi
+        if ! download "$base/PhoneBox-$ver.apk" "$apk"; then
+          caution "Phone app skipped: the download failed ($base/PhoneBox-$ver.apk)."
+        elif ! check_sum "$apk" "$sums"; then
+          caution 'Phone app skipped: the APK could not be verified.'
+        elif install_phone_app "$apk" "$device"; then
+          phone_done=1
+        fi
       fi
     fi
   fi

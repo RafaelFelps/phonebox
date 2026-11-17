@@ -109,7 +109,7 @@ curl -fsSL https://raw.githubusercontent.com/ersinkoc/phonebox/main/setup.sh | b
 ### 2. Connect the phone
 
 - **Over USB** (recommended): it wakes the phone on plug-in, updates the app and falls back to USB when Wi-Fi drops.
-  The phone needs Android 7.0 or later with USB debugging turned on:
+  The phone needs Android 5.0 or later (Android 6 or later recommended) with USB debugging turned on:
   1. *Settings › About phone*: tap *Build number* seven times.
   2. *Developer options*: turn on *USB debugging*. On Xiaomi, Redmi and POCO, also turn on *Install via USB*.
   3. Plug the phone in with a data cable and answer *Allow USB debugging?* with *Allow*.
@@ -194,6 +194,24 @@ watts, fan speed and clocks. Without it Windows still reports any GPU's load, VR
 cards get the full set from `nvidia-smi`. A PC with two GPUs (a graphics card and the processor's integrated one) shows
 both: the card is the main GPU, the GPU details widget can show either.
 
+#### LibreHardwareMonitor on Windows
+
+PhoneBox reads LibreHardwareMonitor's sensor list from `http://127.0.0.1:8085/data.json` whenever it is there; there
+is nothing to turn on in PhoneBox.
+
+1. Download the latest release from
+   [LibreHardwareMonitor's releases](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor/releases), unzip it
+   to a folder of its own and start `LibreHardwareMonitor.exe` **as administrator** (CPU temperatures and several GPU
+   sensors need it).
+2. In its menu choose **Options › Remote Web Server › Run**. The port stays **8085** (PhoneBox only looks there).
+3. Check it in a browser on the PC: <http://127.0.0.1:8085/data.json> should show a long JSON text. Within a few
+   seconds the CPU temperature and the extra GPU values appear on the phone.
+4. To keep it running: **Options › Start Minimized**, **Minimize To Tray** and **Run On Windows Startup**.
+
+The web server answers on every network the PC is on. If Windows Firewall asks, PhoneBox only needs it on this
+computer, so you can leave the network access unchecked. Menu names are those of recent LibreHardwareMonitor versions
+and may differ slightly in older ones.
+
 ## Wi-Fi & Tailscale
 
 Turn on **Settings › General › Wi-Fi & Tailscale** and restart the agent when asked. Then pair the phone in one
@@ -251,6 +269,15 @@ cable, or a port straight on the computer instead of a hub or a front-panel port
 
 GPU values come from Windows itself (the temperature, as in Task Manager, needs Windows 10 2004 or later and a WDDM 2.4 driver), `nvidia-smi` for NVIDIA cards, `amdgpu` sysfs on Linux, or IORegistry on Apple silicon. The GPU hot spot and an AMD or Intel card's watts, fan and clocks need LibreHardwareMonitor. CPU temperature needs LibreHardwareMonitor's web server on port 8085,
 GitHub needs `gh auth login`, quotas and sessions need Claude Code / Codex to have been used on this PC.
+</details>
+
+<details><summary><b>On Android 5 or 6, the weather says "Weather unavailable".</b></summary>
+
+The weather and air quality come straight from Open-Meteo over HTTPS, and Android before 7.1.1 doesn't trust the
+certificate authority its certificate chains to (Let's Encrypt's ISRG Root X1). Download `isrgrootx1.pem` from
+[letsencrypt.org/certificates](https://letsencrypt.org/certificates/), rename it to `isrgrootx1.crt`, and install it
+under **Settings › Security › Install from device storage**. The panel itself talks to the computer and is not
+affected. Thanks to [phongnguyen2277](https://github.com/phongnguyen2277) for finding this (#184).
 </details>
 
 <details><summary><b>I want the volume keys to change the phone's volume.</b></summary>

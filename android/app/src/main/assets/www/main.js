@@ -1397,6 +1397,49 @@ pager.addEventListener('touchend', (e) => {
 
 pager.addEventListener('touchcancel', () => { swipeTracking = false; }, { passive: true });
 
+// Mouse drag: a scroll-snap pager cannot be dragged with a mouse, so in a desktop browser (and the settings page's
+// live preview) dragging an empty part of a page flips pages the way a finger swipe does, wrap-around included.
+let mouseDrag = null;
+pager.addEventListener('pointerdown', (e) => {
+  if (e.pointerType !== 'mouse' || e.button !== 0 || pages.length < 2) return;
+  if (volDragging || e.target.closest?.('button, input, textarea, select, a, [contenteditable], .s-list, .vb, .radio-carousel-track')) return;
+  mouseDrag = { x: e.clientX, y: e.clientY, left: pager.scrollLeft, page: curPage, moved: false, id: e.pointerId };
+});
+pager.addEventListener('pointermove', (e) => {
+  if (!mouseDrag || e.pointerId !== mouseDrag.id) return;
+  const dx = e.clientX - mouseDrag.x;
+  if (!mouseDrag.moved) {
+    if (Math.abs(dx) < 8 || Math.abs(dx) < Math.abs(e.clientY - mouseDrag.y)) return;
+    mouseDrag.moved = true;
+    pager.setPointerCapture(e.pointerId);
+    pager.style.scrollSnapType = 'none';
+    document.body.style.userSelect = 'none';
+  }
+  pager.scrollLeft = mouseDrag.left - dx;
+});
+const endMouseDrag = (e) => {
+  if (!mouseDrag || e.pointerId !== mouseDrag.id) return;
+  const d = mouseDrag;
+  mouseDrag = null;
+  if (!d.moved) return;
+  document.body.style.userSelect = '';
+  const dx = e.clientX - d.x, last = pages.length - 1;
+  let to = d.page;
+  if (e.type === 'pointerup' && Math.abs(dx) >= 40) to = dx < 0 ? (d.page === last ? 0 : d.page + 1) : (d.page === 0 ? last : d.page - 1);
+  lastTouch = lastUserTouch = Date.now();
+  if (to !== d.page) haptic();
+  // the snap comes back once the pager sits on a page again
+  pager.scrollTo({ left: to * window.innerWidth, behavior: Math.abs(to - d.page) > 1 ? 'instant' : 'smooth' });
+  clearTimeout(snapTimer);
+  snapTimer = setTimeout(() => { pager.style.scrollSnapType = ''; onScroll(); }, 450);
+  // a drag must not also click the widget under the mouse
+  const swallow = (c) => { c.stopPropagation(); c.preventDefault(); };
+  window.addEventListener('click', swallow, { capture: true, once: true });
+  setTimeout(() => window.removeEventListener('click', swallow, true), 0);
+};
+pager.addEventListener('pointerup', endMouseDrag);
+pager.addEventListener('pointercancel', endMouseDrag);
+
 /** Called by the Android shell (volume keys) and by arrow keys in a desktop browser. */
 window.onAndroidKey = (k) => {
   lastTouch = lastUserTouch = Date.now();

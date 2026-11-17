@@ -33,7 +33,7 @@ export const $ = (id) => document.getElementById(id);
 // The native bridge (window.Android) is in every frame, sandboxed widgets included, so each call carries a key that only
 // the panel's own frames receive (MainActivity.bridgeKey). This wrapper adds it.
 const BRIDGE = ['battery', 'buzz', 'haptic', 'is24Hour', 'pcs', 'selectPc', 'forgetPc', 'setBrightness', 'setHomeScreen', 'setOrientation',
-  'setPinned', 'setVolumeKeys', 'transport', 'sensors', 'version'];
+  'setPinned', 'setVolumeKeys', 'transport', 'sensors', 'version', 'lockScreen'];
 export const bridge = typeof Android === 'undefined' ? null : Object.fromEntries(BRIDGE.filter((m) => typeof Android[m] === 'function')
   .map((m) => [m, (...args) => Android[m](window.__phoneboxKey || '', ...args)]));
 // Live preview inside the agent's layout editor: the layout comes from the editor (unsaved), not from the agent.
@@ -1353,6 +1353,19 @@ pager.addEventListener('pointerdown', (e) => {
 });
 pager.addEventListener('pointermove', (e) => { if (pressAt && Math.hypot(e.clientX - pressAt[0], e.clientY - pressAt[1]) > 12) { clearTimeout(pressTimer); pressAt = null; } });
 ['pointerup', 'pointercancel'].forEach((ev) => pager.addEventListener(ev, () => { clearTimeout(pressTimer); pressAt = null; }));
+
+// Double-tap on an empty part of a page locks the phone, like the double-tap that wakes it (Android shell only).
+let lastTap = null;
+pager.addEventListener('pointerup', (e) => {
+  if (!bridge?.lockScreen || e.pointerType === 'mouse') return;
+  if (!e.target.classList.contains('grid') && !e.target.classList.contains('page')) { lastTap = null; return; }
+  const now = Date.now();
+  if (lastTap && now - lastTap.at < 350 && Math.hypot(e.clientX - lastTap.x, e.clientY - lastTap.y) < 40) {
+    lastTap = null;
+    haptic();
+    bridge.lockScreen();
+  } else lastTap = { at: now, x: e.clientX, y: e.clientY };
+});
 
 // Edge swipe wrap-around: swiping left on the last page wraps to the first page,
 // and swiping right on the first page wraps to the last page.

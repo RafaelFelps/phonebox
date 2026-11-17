@@ -418,6 +418,33 @@ class MainActivity : Activity(), SensorEventListener {
                 packageManager.setComponentEnabledSetting(alias, want, PackageManager.DONT_KILL_APP)
         }
 
+        /**
+         * Locks the phone (LockService). The first time, when the service is still off, explains it and offers to open
+         * Settings › Accessibility, where the person switches it on themselves.
+         */
+        @JavascriptInterface
+        fun lockScreen(key: String): Boolean {
+            if (!ok(key)) return false
+            if (LockService.lock()) return true
+            runOnUiThread {
+                if (!LockService.supported) {
+                    Toast.makeText(this@MainActivity, "Locking from the panel needs Android 9 or newer", Toast.LENGTH_LONG).show()
+                    return@runOnUiThread
+                }
+                AlertDialog.Builder(this@MainActivity)
+                    .setTitle("Lock with a double-tap")
+                    .setMessage("Android only lets apps turn the screen off through an accessibility service. In the list that opens, " +
+                        "tap \"PhoneBox screen lock\" and switch it on. It only locks the screen; it cannot read it.\n\n" +
+                        "If Android says the setting is restricted: App info › PhoneBox › ⋮ › Allow restricted settings, then try again.")
+                    .setPositiveButton("Open settings") { _, _ ->
+                        startActivity(Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                    }
+                    .setNegativeButton("Not now", null)
+                    .show().plainButtons()
+            }
+            return false
+        }
+
         @JavascriptInterface
         fun version(key: String): String = if (ok(key)) packageManager.getPackageInfo(packageName, 0).versionName ?: "" else ""
     }

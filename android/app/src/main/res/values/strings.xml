@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="lock_service_label">PhoneBox screen lock</string>
+    <string name="lock_service_description">Lets you lock the phone by double-tapping an empty part of the PhoneBox panel, like pressing the power button. It does not read the screen or anything you type.</string>
+</resources>

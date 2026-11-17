@@ -1,7 +1,7 @@
 using PhoneBox.Agent;
 using Xunit;
 
-/// <summary>Reading the Steam client's files (VDF), news text and the image hosts the agent may fetch.</summary>
+/// <summary>Reading the Steam client's files (VDF) and the image hosts the agent may fetch.</summary>
 public sealed class SteamTests
 {
     private const string Manifest = """
@@ -60,14 +60,6 @@ public sealed class SteamTests
         Assert.Null(SteamLocal.ParseManifest(Vdf.Parse(redist), "x"));
         var done = Manifest.Replace("\"1026\"", "\"4\"").Replace("\"500\"", "\"2000\"").Replace("\"BytesStaged\"\t\t\"0\"", "\"BytesStaged\"\t\t\"3000\"");
         Assert.False(SteamLocal.ParseManifest(Vdf.Parse(done), "x")!.Downloading);
-    }
-
-    [Fact]
-    public void Cleans_news_markup()
-    {
-        var text = SteamMonitor.CleanNews("[h1]Patch 7[/h1] [b]New:[/b]  <i>photo</i> mode &amp; more {STEAM_CLAN_IMAGE}/abc/def.png");
-        Assert.Equal("Patch 7 New: photo mode & more", text);
-        Assert.EndsWith("…", SteamMonitor.CleanNews(new string('a', 400)));
     }
 
     /// <summary>Writes binary KeyValues: (key, value) pairs; a value that is an array opens a block.</summary>

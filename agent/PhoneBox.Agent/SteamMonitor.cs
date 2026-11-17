@@ -15,8 +15,6 @@ public sealed record SteamUpdate(long AppId, string Name, long SizeBytes);
 /// <param name="State">0 offline, 1 online, 2 busy, 3 away, 4 snooze, 5 looking to trade, 6 looking to play</param>
 public sealed record SteamFriend(string Id, string Name, string? Avatar, int State, string? Game, long? GameId, long? LastOff);
 public sealed record SteamRecent(long AppId, string Name, long TwoWeeksMin, long TotalMin);
-public sealed record SteamNews(string Title, string Url, long Date, string? Feed, string Contents);
-public sealed record SteamSale(long AppId, string Name, int Discount, string Price, string? Was);
 public sealed record SteamLibraryItem(long AppId, string Name, long SizeBytes, long LastPlayed, long PlaytimeMin, bool Downloading,
     bool UpdateAvailable = false);
 
@@ -35,14 +33,13 @@ internal sealed record SteamSchemaEntry(string Name, string? Description, string
 /// <param name="Status">ok, not-installed (no Steam client found) or off (no Steam widget on a page)</param>
 public sealed record SteamSnapshot(string Status, string? Error, bool HasKey, bool ClientRunning, string? User, string? Avatar, int? State,
     SteamNow? Playing, SteamAchievements? Achievements, IReadOnlyList<SteamDownload> Downloads, IReadOnlyList<SteamFriend> Friends,
-    IReadOnlyList<SteamRecent> Recent, long? NewsApp, string? NewsGame, IReadOnlyList<SteamNews> News, IReadOnlyList<SteamSale> Sales, long Updated,
+    IReadOnlyList<SteamRecent> Recent, long Updated,
     IReadOnlyList<SteamUpdate>? Updates = null);
 
 /// <summary>
-/// Steam on this computer and on the web. The client's own files give the installed games, downloads, play time and
-/// screenshots (no account needed); the Steam Web API, with the user's key, gives friends, achievements, the recent
-/// games, news and wishlist prices. Notifications go to the phone like a webhook's: a finished download, a new
-/// achievement, a friend starting a game, a wishlist game on sale. Nothing runs unless a page has a Steam widget.
+/// Steam on this computer and on the web. The client's own files give the installed games, downloads and play time
+/// (no account needed); the Steam Web API, with the user's key, gives friends, achievements and the recent games.
+/// Notifications go to the phone like a webhook's: a finished download, a new achievement, a friend starting a game. Nothing runs unless a page has a Steam widget.
 /// </summary>
 public sealed class SteamMonitor(ConfigStore config, PushStore push, ILogger<SteamMonitor> log) : BackgroundService
 {
@@ -89,17 +86,12 @@ public sealed class SteamMonitor(ConfigStore config, PushStore push, ILogger<Ste
     private readonly ConcurrentDictionary<long, (SteamGameDetails Details, long At)> _details = new();
     private readonly ConcurrentDictionary<long, (int? Count, long At)> _playersAt = new();
     private readonly Dictionary<long, int?> _players = [];
-    private long? _newsApp;
-    private string? _newsGame;
-    private List<SteamNews> _news = [];
-    private List<SteamSale> _sales = [];
     private readonly Dictionary<long, string> _storeNames = [];
     private long _updated;
 
-    private long _nextPlay, _nextSummary, _nextFriends, _nextRecent, _nextAch, _nextPlayers, _nextNews, _nextSales;
+    private long _nextPlay, _nextSummary, _nextFriends, _nextRecent, _nextAch, _nextPlayers;
     private string? _lastKeyId; // key + id the web data belongs to: a change starts over
 
-    private static readonly string SalesPath = Path.Combine(AppPaths.LocalDir, "steam-sales.json");
     private readonly ConcurrentDictionary<string, (byte[] Bytes, string Type, long At)> _images = new();
 
     public static bool WidgetOn(AgentConfig cfg) => cfg.Widgets(enabledPagesOnly: true).Any(w => w.Type.StartsWith("steam", StringComparison.Ordinal));
@@ -124,14 +116,14 @@ public sealed class SteamMonitor(ConfigStore config, PushStore push, ILogger<Ste
                 playing, _ach, downloads,
                 _friends.Where(f => f.State > 0).OrderByDescending(f => f.Game is not null).ThenBy(f => f.Name, StringComparer.OrdinalIgnoreCase)
                     .Concat(_friends.Where(f => f.State == 0).OrderByDescending(f => f.LastOff ?? 0)).ToList(),
-                _recent, _newsApp, _newsGame, _news, _sales, _updated,
+                _recent, _updated,
                 _games.Where(g => g.UpdateAvailable).OrderBy(g => g.Name, StringComparer.OrdinalIgnoreCase)
                     .Select(g => new SteamUpdate(g.AppId, g.Name, g.SizeBytes)).ToList());
         }
     }
 
     private static SteamSnapshot Empty(string status) =>
-        new(status, null, false, false, null, null, null, null, null, [], [], [], null, null, [], [], 0);
+        new(status, null, false, false, null, null, null, null, null, [], [], [], 0);
 
     public List<SteamLibraryItem> Library()
     {
@@ -141,24 +133,6 @@ public sealed class SteamMonitor(ConfigStore config, PushStore push, ILogger<Ste
                 var p = _play.GetValueOrDefault(g.AppId);
                 return new SteamLibraryItem(g.AppId, g.Name, g.SizeBytes, p?.LastPlayed ?? 0, p?.PlaytimeMin ?? 0, g.Downloading, g.UpdateAvailable);
             }).OrderByDescending(g => g.LastPlayed).ThenBy(g => g.Name, StringComparer.OrdinalIgnoreCase).ToList();
-    }
-
-    public object Screenshots()
-    {
-        string? root; long id;
-        lock (_lock) { root = _root; id = _steamId; }
-        if (root is null || id == 0) return new { shots = Array.Empty<object>() };
-        return new
-        {
-            shots = SteamLocal.Screenshots(root, id).Select(s => new { app = s.AppId, game = NameOf(s.AppId), file = s.File, taken = s.Taken, size = s.Size }),
-        };
-    }
-
-    public string? ScreenshotFile(long app, string file, bool thumb)
-    {
-        string? root; long id;
-        lock (_lock) { root = _root; id = _steamId; }
-        return root is null || id == 0 ? null : SteamLocal.ScreenshotPath(root, id, app, file, thumb);
     }
 
     private string NameOf(long app)
@@ -292,24 +266,13 @@ public sealed class SteamMonitor(ConfigStore config, PushStore push, ILogger<Ste
         var now = Environment.TickCount64;
         var focus = FocusApp();
 
-        // the player count and news need no key
+        // the player count needs no key
         if (focus is { } fa && (now >= _nextPlayers || !_players.ContainsKey(fa)))
         {
             _nextPlayers = now + 300_000;
             var j = await GetJson($"{Api}/ISteamUserStats/GetNumberOfCurrentPlayers/v1/?appid={fa}", ct);
             var count = Resp(j) is { } r && r.TryGetProperty("player_count", out var pc) ? pc.GetInt32() : (int?)null;
             lock (_lock) _players[fa] = count;
-        }
-        if (focus is { } na && (now >= _nextNews || _newsApp != na))
-        {
-            _nextNews = now + 1_800_000;
-            var j = await GetJson($"{Api}/ISteamNews/GetNewsForApp/v2/?appid={na}&count=6&maxlength=400&format=json", ct);
-            var items = new List<SteamNews>();
-            if (j?.TryGetProperty("appnews", out var an) == true && an.TryGetProperty("newsitems", out var ni))
-                foreach (var n in ni.EnumerateArray())
-                    items.Add(new SteamNews(Str(n, "title") ?? "", Str(n, "url") ?? "", (n.TryGetProperty("date", out var d) ? d.GetInt64() : 0) * 1000,
-                        Str(n, "feedlabel"), CleanNews(Str(n, "contents") ?? "")));
-            lock (_lock) { _newsApp = na; _newsGame = NameOf(na); _news = items; }
         }
         // achievements from the client's own files: no key, and a private profile still sees its own
         var localAch = focus is { } la && ReadLocalAchievements(la, cfg);
@@ -319,7 +282,7 @@ public sealed class SteamMonitor(ConfigStore config, PushStore push, ILogger<Ste
             lock (_lock)
             {
                 _error = string.IsNullOrEmpty(cfg.ApiKey) ? null : "Steam account not found: sign in to Steam on this PC or set your SteamID in Settings › Steam";
-                _friends = []; _recent = []; _sales = [];
+                _friends = []; _recent = [];
                 if (!localAch) _ach = null; _webGame = null; _state = null; _avatar = null;
             }
             return;
@@ -328,7 +291,7 @@ public sealed class SteamMonitor(ConfigStore config, PushStore push, ILogger<Ste
         if (_lastKeyId != cfg.ApiKey + "|" + id)
         {
             _lastKeyId = cfg.ApiKey + "|" + id;
-            _nextSummary = _nextFriends = _nextRecent = _nextAch = _nextSales = 0;
+            _nextSummary = _nextFriends = _nextRecent = _nextAch = 0;
             lock (_lock) { _friendsLoaded = false; _friendIds = []; _achDone = null; _achApp = 0; _error = null; }
         }
 
@@ -365,11 +328,6 @@ public sealed class SteamMonitor(ConfigStore config, PushStore push, ILogger<Ste
             {
                 _nextAch = now + (playingNow ? 60_000 : 900_000);
                 await ReadAchievements(key, id, aa, cfg, ct);
-            }
-            if (now >= _nextSales)
-            {
-                _nextSales = now + 6 * 3_600_000;
-                await ReadSales(key, id, cfg, ct);
             }
             lock (_lock) _error = null;
         }
@@ -621,58 +579,6 @@ public sealed class SteamMonitor(ConfigStore config, PushStore push, ILogger<Ste
         return details;
     }
 
-    private async Task ReadSales(string key, long id, SteamConfig cfg, CancellationToken ct)
-    {
-        var w = await GetJson($"{Api}/IWishlistService/GetWishlist/v1/?key={key}&steamid={id}", ct, allowForbidden: true);
-        var apps = new List<long>();
-        if (Resp(w) is { } r && r.TryGetProperty("items", out var items))
-            foreach (var i in items.EnumerateArray()) apps.Add(i.GetProperty("appid").GetInt64());
-        var onSale = new List<(long App, int Discount, string Price, string? Was)>();
-        foreach (var chunk in apps.Take(300).Chunk(50))
-        {
-            var p = await GetJson($"https://store.steampowered.com/api/appdetails?appids={string.Join(',', chunk)}&filters=price_overview&cc={cfg.Country}", ct, allowForbidden: true);
-            if (p is not { ValueKind: JsonValueKind.Object } prices) continue;
-            foreach (var app in chunk)
-                if (prices.TryGetProperty(app.ToString(), out var e) && e.TryGetProperty("data", out var data) && data.ValueKind == JsonValueKind.Object
-                    && data.TryGetProperty("price_overview", out var po) && po.TryGetProperty("discount_percent", out var dp) && dp.GetInt32() > 0)
-                    onSale.Add((app, dp.GetInt32(), Str(po, "final_formatted") ?? "", Str(po, "initial_formatted")));
-        }
-        var sales = new List<SteamSale>();
-        foreach (var s in onSale.OrderByDescending(s => s.Discount).Take(30))
-        {
-            string? name;
-            lock (_lock) name = _storeNames.GetValueOrDefault(s.App);
-            if (name is null)
-            {
-                var d = await GetJson($"https://store.steampowered.com/api/appdetails?appids={s.App}&filters=basic&cc={cfg.Country}", ct, allowForbidden: true);
-                name = d?.TryGetProperty(s.App.ToString(), out var e) == true && e.TryGetProperty("data", out var data) && data.ValueKind == JsonValueKind.Object ? Str(data, "name") : null;
-                name ??= $"App {s.App}";
-                lock (_lock) _storeNames[s.App] = name;
-            }
-            sales.Add(new SteamSale(s.App, name, s.Discount, s.Price, s.Was));
-        }
-        lock (_lock) _sales = sales;
-        if (!cfg.NotifySales) return;
-        var seen = LoadSeenSales();
-        var current = sales.Select(s => $"{s.AppId}:{s.Discount}").ToHashSet();
-        var fresh = sales.Where(s => !seen.Contains($"{s.AppId}:{s.Discount}")).ToList();
-        if (seen.Count > 0 || fresh.Count <= 3) // the first run does not announce a whole wishlist at once
-            foreach (var s in fresh.Take(3)) Notify("On sale", $"{s.Name}: -{s.Discount}% · {s.Price}", "ok");
-        SaveSeenSales(current);
-    }
-
-    private static HashSet<string> LoadSeenSales()
-    {
-        try { return File.Exists(SalesPath) ? JsonSerializer.Deserialize<HashSet<string>>(File.ReadAllText(SalesPath)) ?? [] : []; }
-        catch (Exception) { return []; }
-    }
-
-    private static void SaveSeenSales(HashSet<string> seen)
-    {
-        try { Directory.CreateDirectory(AppPaths.LocalDir); File.WriteAllText(SalesPath, JsonSerializer.Serialize(seen)); }
-        catch (Exception) { }
-    }
-
     /// <summary>The game being played (from the client, else from the web profile).</summary>
     private long? CurrentGame()
     {
@@ -712,15 +618,6 @@ public sealed class SteamMonitor(ConfigStore config, PushStore push, ILogger<Ste
 
     private static string? Str(JsonElement e, string name) =>
         e.ValueKind == JsonValueKind.Object && e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
-
-    /// <summary>News bodies come as BBCode or HTML: plain text, short.</summary>
-    internal static string CleanNews(string s)
-    {
-        s = System.Text.RegularExpressions.Regex.Replace(s, @"\[/?[a-zA-Z0-9*]+(=[^\]]*)?\]|<[^>]+>|\{STEAM_CLAN_IMAGE\}\S*", " ");
-        s = System.Net.WebUtility.HtmlDecode(s);
-        s = System.Text.RegularExpressions.Regex.Replace(s, @"\s+", " ").Trim();
-        return s.Length > 280 ? s[..277].TrimEnd() + "…" : s;
-    }
 
     private void Notify(string title, string text, string level)
     {

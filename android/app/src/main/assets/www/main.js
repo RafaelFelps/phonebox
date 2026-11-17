@@ -982,7 +982,7 @@ export const WIDGET_ICONS = { camera: '📹', dictate: '🎙️', spectrum: '�
   github: '🐙', processes: '⚙️', shortcuts: '🎛️', button: '🔘', worldclock: '🌍', calendar: '📅', pomodoro: '🍅', countdown: '⏳', note: '📝', command: '💻',
   push: '📡', inbox: '📬', label: '🔤', analog: '🕰️', progress: '📆', stopwatch: '⏱️', timer: '⏲️', counter: '🔢', breathe: '🫁', quote: '💬',
   checklist: '✅', battery: '🔋', topprocs: '🔥', quotaring: '🎯', volume: '🔊', sun: '🌅', air: '🍃', hackernews: '📰', feeds: '🗞️', photos: '🖼️', exchange: '💱', crypto: '🪙', image: '🖼️', pcswitch: '🖥️',
-  controls: '🎚️', steam: '🎮', 'steam-friends': '👥', 'steam-library': '🕹️', 'steam-screenshots': '🖼️', 'steam-store': '🏷️' };
+  controls: '🎚️', steam: '🎮', 'steam-friends': '👥', 'steam-library': '🕹️' };
 
 // ================================================================= pages
 export const pager = $('pager');

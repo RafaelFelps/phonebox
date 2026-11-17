@@ -591,21 +591,13 @@ app.MapGet("/api/discord/hub", (DiscordHubMonitor hub, ConfigStore cfg) => Resul
 }));
 app.MapPost("/api/discord/hub/{action}", async (string action, string? channel, DiscordHubMonitor hub) =>
     await hub.ActAsync(action, channel) is { } error ? Results.BadRequest(new { error }) : Results.Ok(new { ok = true }));
-// Steam (widgets): the client's games, downloads and screenshots, and with an API key friends, achievements, news and
-// wishlist sales. Covers, avatars and achievement icons come through the agent (Steam's image hosts only).
+// Steam (widgets): the client's games and downloads, and with an API key friends and achievements. Covers, avatars and achievement icons come through the agent (Steam's image hosts only).
 static bool SteamOn(ConfigStore cfg) => SteamMonitor.WidgetOn(cfg.Get());
 static bool SteamControl(ConfigStore cfg) => cfg.Get().Widgets(enabledPagesOnly: true).Any(w => w.Type.StartsWith("steam", StringComparison.Ordinal) && w.Bool("control") != false);
 app.MapGet("/api/steam", (SteamMonitor steam) => Results.Json(steam.Snapshot()));
 app.MapGet("/api/steam/library", (SteamMonitor steam, ConfigStore cfg) => SteamOn(cfg) ? Results.Json(new { games = steam.Library() }) : Results.Json(new { games = Array.Empty<object>() }));
 app.MapGet("/api/steam/game/{app:long}", async (long app, SteamMonitor steam, ConfigStore cfg, CancellationToken ct) =>
     !SteamOn(cfg) || app <= 0 ? Results.NotFound() : Results.Json(await steam.GameDetails(app, ct)));
-app.MapGet("/api/steam/screenshots", (SteamMonitor steam, ConfigStore cfg) => SteamOn(cfg) ? Results.Json(steam.Screenshots()) : Results.Json(new { shots = Array.Empty<object>() }));
-app.MapGet("/api/steam/shot", (long app, string file, bool? thumb, SteamMonitor steam, ConfigStore cfg, HttpContext ctx) =>
-{
-    if (!SteamOn(cfg) || steam.ScreenshotFile(app, file, thumb == true) is not { } path) return Results.NotFound();
-    ctx.Response.Headers.CacheControl = "private, max-age=86400";
-    return Results.File(path, "image/jpeg");
-});
 app.MapGet("/api/steam/cover", async (long app, string? kind, SteamMonitor steam, ConfigStore cfg, HttpContext ctx, CancellationToken ct) =>
 {
     if (!SteamOn(cfg) || app <= 0 || await steam.Cover(app, kind is "header" or "hero" ? kind : "portrait", ct) is not { } img) return Results.NotFound();

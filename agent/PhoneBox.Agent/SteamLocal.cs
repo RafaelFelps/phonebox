@@ -169,13 +169,12 @@ public sealed record SteamGame(long AppId, string Name, long SizeBytes, string L
 
 public sealed record SteamPlay(long LastPlayed, long PlaytimeMin);
 
-public sealed record SteamShot(long AppId, string File, long Taken, long Size);
 
 /// <param name="UnlockedAt">Unix seconds; 0 when locked or the time is unknown.</param>
 public sealed record SteamLocalAchievement(string ApiName, string Name, string? Description, string? Icon, string? IconGray,
     bool Hidden, bool Achieved, long UnlockedAt);
 
-/// <summary>What the Steam client keeps on this computer: install folders, games, play time, screenshots.</summary>
+/// <summary>What the Steam client keeps on this computer: install folders, games, play time.</summary>
 public static class SteamLocal
 {
     /// <summary>The account id in userdata/ is the low 32 bits of the SteamID64.</summary>
@@ -303,26 +302,6 @@ public static class SteamLocal
         return map;
     }
 
-    /// <summary>Screenshots taken with Steam's F12 key, newest first.</summary>
-    public static List<SteamShot> Screenshots(string root, long steamId, int max = 60)
-    {
-        var list = new List<SteamShot>();
-        var remote = Path.Combine(root, "userdata", (steamId - SteamId64Base).ToString(), "760", "remote");
-        if (!Directory.Exists(remote)) return list;
-        foreach (var appDir in Directory.EnumerateDirectories(remote))
-        {
-            if (!long.TryParse(Path.GetFileName(appDir), out var app)) continue;
-            var shots = Path.Combine(appDir, "screenshots");
-            if (!Directory.Exists(shots)) continue;
-            foreach (var f in Directory.EnumerateFiles(shots, "*.jpg"))
-            {
-                var info = new FileInfo(f);
-                list.Add(new SteamShot(app, info.Name, new DateTimeOffset(info.LastWriteTimeUtc).ToUnixTimeMilliseconds(), info.Length));
-            }
-        }
-        return list.OrderByDescending(s => s.Taken).Take(max).ToList();
-    }
-
     /// <summary>
     /// The achievements the client keeps for a game in appcache/stats, so a private profile still sees its own:
     /// UserGameStatsSchema_&lt;app&gt;.bin names them (every language, icons, hidden ones) and
@@ -362,14 +341,6 @@ public static class SteamLocal
             }
         }
         return list;
-    }
-
-    public static string? ScreenshotPath(string root, long steamId, long app, string file, bool thumb)
-    {
-        if (app <= 0 || file.Contains('/') || file.Contains('\\') || file.Contains("..") || !file.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase)) return null;
-        var dir = Path.Combine(root, "userdata", (steamId - SteamId64Base).ToString(), "760", "remote", app.ToString(), "screenshots");
-        var p = thumb ? Path.Combine(dir, "thumbnails", file) : Path.Combine(dir, file);
-        return File.Exists(p) ? p : thumb && File.Exists(Path.Combine(dir, file)) ? Path.Combine(dir, file) : null;
     }
 
     /// <summary>

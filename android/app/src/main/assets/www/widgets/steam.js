@@ -2,8 +2,8 @@ import { API, PANEL_HEADERS, api, fmtDur, h, haptic, shortDur, toast } from '../
 import { W } from '../registry.js';
 import { every } from './helpers.js';
 
-// Steam: the Steam client on the PC (games, downloads, play time, screenshots) and, with a Web API key in
-// Settings › Steam, friends, achievements, news and wishlist sales. Five widgets share one reading of /api/steam.
+// Steam: the Steam client on the PC (games, downloads, play time) and, with a Web API key in
+// Settings › Steam, friends and achievements. Three widgets share one reading of /api/steam.
 const STATES = ['Offline', 'Online', 'Busy', 'Away', 'Snooze', 'Looking to trade', 'Looking to play'];
 const STATUS_TEXT = {
   off: 'Add a Steam widget to a page',
@@ -300,81 +300,5 @@ W['steam-library'] = {
     const loadGames = every(60_000, async () => { try { games = (await api('/steam/library')).games || []; render(); return true; } catch (_) { return false; } }, 10_000);
     const tick = every(4000, async () => { try { data = await steamData(); render(); return true; } catch (_) { return false; } }, 5000);
     return { update: () => { loadGames(); tick(); render(); } };
-  },
-};
-
-// ================================================================ Screenshots
-W['steam-screenshots'] = {
-  needs: ['tick'],
-  create(box, { o }) {
-    let shots = null, key = '', status = null;
-    box.classList.add('st');
-    const grid = h('div', 'st-shots');
-    box.append(h('div', 'w-title', o.title || 'Steam screenshots'), grid);
-    const open = (s) => {
-      haptic();
-      const big = img(`${API}/steam/shot?app=${s.app}&file=${encodeURIComponent(s.file)}`, 'st-shot-big', s.game);
-      const layer = h('div', 'st-viewer', big, h('div', 'st-viewer-cap', `${s.game} · ${new Date(s.taken).toLocaleString()}`));
-      layer.addEventListener('click', () => layer.remove());
-      document.body.append(layer);
-    };
-    const render = () => {
-      const msg = status ? message(box, status) : null;
-      const k = JSON.stringify([msg, shots?.map((s) => s.file)]);
-      if (k === key) return;
-      key = k;
-      if (msg) { grid.replaceChildren(h('div', 'empty', msg)); return; }
-      if (!shots) { grid.replaceChildren(h('div', 'empty', 'Loading…')); return; }
-      if (!shots.length) { grid.replaceChildren(h('div', 'empty', 'No screenshots yet: press F12 in a game')); return; }
-      grid.replaceChildren(...shots.slice(0, +o.count || 24).map((s) => {
-        const b = h('button', 'st-shot', img(`${API}/steam/shot?app=${s.app}&file=${encodeURIComponent(s.file)}&thumb=true`, 'st-shot-img', s.game),
-          h('div', 'st-shot-cap', s.game));
-        b.addEventListener('click', () => open(s));
-        return b;
-      }));
-    };
-    const load = every(30_000, async () => {
-      try { status = await steamData(10_000); shots = (await api('/steam/screenshots')).shots || []; render(); return true; } catch (_) { return false; }
-    }, 10_000);
-    return { update: () => { load(); render(); } };
-  },
-};
-
-// ================================================================ Store: wishlist sales and news
-W['steam-store'] = {
-  needs: ['tick'],
-  create(box, { o }) {
-    let data = null, key = '', tab = o.start === 'news' ? 'news' : 'sales';
-    box.classList.add('st');
-    const tabs = h('div', 'seg', h('button', tab === 'sales' ? 'on' : null, 'Sales'), h('button', tab === 'news' ? 'on' : null, 'News'));
-    const list = h('div', 'st-store');
-    box.append(h('div', 'st-store-head', h('span', 'w-title', o.title || 'Steam'), tabs), list);
-    [...tabs.children].forEach((b, i) => b.addEventListener('click', () => {
-      haptic(); tab = i ? 'news' : 'sales';
-      [...tabs.children].forEach((x, j) => x.classList.toggle('on', j === i));
-      key = ''; render();
-    }));
-    const render = () => {
-      const s = data;
-      const msg = message(box, s, tab === 'sales');
-      const k = JSON.stringify([msg, tab, s?.sales, s?.news, s?.newsGame]);
-      if (k === key) return;
-      key = k;
-      if (msg) { list.replaceChildren(h('div', 'empty', msg)); return; }
-      if (tab === 'sales') {
-        if (!s.sales.length) { list.replaceChildren(h('div', 'empty', 'No wishlist game is on sale right now')); return; }
-        list.replaceChildren(...s.sales.map((x) => h('div', 'st-sale', img(cover(x.appId, 'header'), 'st-sale-img', x.name),
-          h('div', 'st-sale-main', h('div', 'st-sale-name', x.name),
-            h('div', 'st-sale-price', h('span', 'st-off', `-${x.discount}%`), x.was ? h('s', '', x.was) : '', h('b', '', x.price))))));
-      } else {
-        if (!s.news.length) { list.replaceChildren(h('div', 'empty', 'No news')); return; }
-        list.replaceChildren(h('div', 'st-news-game', `News · ${s.newsGame || ''}`), ...s.news.map((n) => h('div', 'st-news',
-          h('div', 'st-news-title', n.title),
-          h('div', 'st-news-meta', [n.feed, n.date ? new Date(n.date).toLocaleDateString() : ''].filter(Boolean).join(' · ')),
-          h('div', 'st-news-text', n.contents))));
-      }
-    };
-    const tick = every(30_000, async () => { try { data = await steamData(10_000); render(); return true; } catch (_) { return false; } }, 10_000);
-    return { update: () => { tick(); render(); } };
   },
 };

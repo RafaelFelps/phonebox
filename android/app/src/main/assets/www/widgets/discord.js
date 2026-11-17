@@ -32,7 +32,6 @@ W.discord = {
     const head = h('div', 'w-title dc-head', h('span', 'dc-chan', o.title || 'Discord'), h('span', 'dc-guild'));
     const list = h('div', 'dc-list');
     const bar = h('div', 'dc-bar');
-    box.classList.add('dc');
     box.append(head, list, bar);
     const load = async () => {
       try { data = await api('/discord'); return true; } catch (_) { return false; }

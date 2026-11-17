@@ -334,12 +334,11 @@ public sealed class SteamConfig
     public string? SteamId { get; set; }
     /// <summary>Store country for prices (two letters, e.g. br, us).</summary>
     public string Country { get; set; } = "br";
-    /// <summary>Store language for achievement names and news (Steam's names: brazilian, english, spanish…).</summary>
+    /// <summary>Store language for achievement names (Steam's names: brazilian, english, spanish…).</summary>
     public string Language { get; set; } = "brazilian";
     public bool NotifyDownloads { get; set; } = true;
     public bool NotifyAchievements { get; set; } = true;
     public bool NotifyFriends { get; set; } = true;
-    public bool NotifySales { get; set; } = true;
 }
 
 public sealed class HomeAssistantConfig

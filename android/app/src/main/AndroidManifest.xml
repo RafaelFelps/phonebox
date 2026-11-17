@@ -52,7 +52,7 @@
             </intent-filter>
         </activity-alias>
 
-        <!-- Double-tap an empty part of the panel to lock the phone (LockService). Off until switched on in
+        <!-- The overview's Lock button (hold anywhere on a page) locks the phone (LockService). Off until switched on in
              Settings › Accessibility; only the system can bind it. -->
         <service
             android:name=".LockService"

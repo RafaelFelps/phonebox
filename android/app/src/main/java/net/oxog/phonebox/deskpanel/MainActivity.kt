@@ -432,7 +432,7 @@ class MainActivity : Activity(), SensorEventListener {
                     return@runOnUiThread
                 }
                 AlertDialog.Builder(this@MainActivity)
-                    .setTitle("Lock with a double-tap")
+                    .setTitle("Lock from the panel")
                     .setMessage("Android only lets apps turn the screen off through an accessibility service. In the list that opens, " +
                         "tap \"PhoneBox screen lock\" and switch it on. It only locks the screen; it cannot read it.\n\n" +
                         "If Android says the setting is restricted: App info › PhoneBox › ⋮ › Allow restricted settings, then try again.")

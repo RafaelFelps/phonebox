@@ -26,7 +26,8 @@
 
       // Panel: Overview & Navigation
       'panel.allPages': 'All pages',
-      'panel.overviewHint': 'tap one to jump · volume keys flip pages · long-press a page to come back here',
+      'panel.overviewHint': 'tap one to jump · volume keys flip pages · hold anywhere on a page to come back here',
+      'panel.lock': '🔒 Lock',
       'panel.close': 'Close',
       'panel.dismiss': 'Dismiss',
       'panel.dismissWebview': 'Dismiss WebView notice',
@@ -1352,7 +1353,8 @@
       'lang.label': 'Idioma',
 
       'panel.allPages': 'Todas as páginas',
-      'panel.overviewHint': 'toque para saltar · teclas de volume mudam página · mantenha pressionado para voltar',
+      'panel.overviewHint': 'toque para saltar · teclas de volume mudam página · segure em qualquer lugar da página para voltar',
+      'panel.lock': '🔒 Bloquear',
       'panel.close': 'Fechar',
       'panel.dismiss': 'Dispensar',
       'panel.dismissWebview': 'Dispensar aviso do WebView',

@@ -1316,6 +1316,7 @@ export function openOverview() {
   };
   $('ovGrid').replaceChildren(...pages.map(tile));
   renderRulesBtn();
+  $('ovLock').hidden = !bridge?.lockScreen;
   // several paired computers: switch between them here (a USB cable always wins)
   const pcs = pairedPcs();
   $('ovPcs').replaceChildren(...(pcs.length > 1 ? pcs.map((pc) => {
@@ -1341,31 +1342,31 @@ export function switchPc(pc) {
 export function closeOverview() { $('overview').hidden = true; }
 $('overview').addEventListener('click', closeOverview);
 $('ovRules').addEventListener('click', (e) => { e.stopPropagation(); toggleRulesPause(); });
+$('ovLock').addEventListener('click', (e) => { e.stopPropagation(); haptic(); closeOverview(); bridge?.lockScreen?.(); });
 $('dots').addEventListener('click', openOverview);
 
-// Long press on an empty part of a page opens the overview too.
+// Holding a finger still anywhere on a page (widgets included) opens the overview: pages, computers and the lock
+// button. A mouse only does it on an empty part, so clicks in a desktop browser stay clicks.
 export let pressTimer = 0;
 export let pressAt = null;
+const HOLD_SKIP = 'input, textarea, select, [contenteditable], .s-list, .vb, .radio-carousel-track';
 pager.addEventListener('pointerdown', (e) => {
-  if (!e.target.classList.contains('grid') && !e.target.classList.contains('page')) return;
+  const empty = e.target.classList.contains('grid') || e.target.classList.contains('page');
+  if (e.pointerType === 'mouse' ? !empty : (volDragging || e.target.closest?.(HOLD_SKIP))) return;
   pressAt = [e.clientX, e.clientY];
-  pressTimer = setTimeout(() => { pressAt = null; openOverview(); }, 550);
+  pressTimer = setTimeout(() => {
+    pressAt = null;
+    openOverview();
+    // lifting the finger must not also press the button it was holding
+    const swallow = (c) => { c.stopPropagation(); c.preventDefault(); };
+    window.addEventListener('click', swallow, { capture: true, once: true });
+    setTimeout(() => window.removeEventListener('click', swallow, true), 1500);
+  }, 550);
 });
+pager.addEventListener('contextmenu', (e) => e.preventDefault());
 pager.addEventListener('pointermove', (e) => { if (pressAt && Math.hypot(e.clientX - pressAt[0], e.clientY - pressAt[1]) > 12) { clearTimeout(pressTimer); pressAt = null; } });
 ['pointerup', 'pointercancel'].forEach((ev) => pager.addEventListener(ev, () => { clearTimeout(pressTimer); pressAt = null; }));
 
-// Double-tap on an empty part of a page locks the phone, like the double-tap that wakes it (Android shell only).
-let lastTap = null;
-pager.addEventListener('pointerup', (e) => {
-  if (!bridge?.lockScreen || e.pointerType === 'mouse') return;
-  if (!e.target.classList.contains('grid') && !e.target.classList.contains('page')) { lastTap = null; return; }
-  const now = Date.now();
-  if (lastTap && now - lastTap.at < 350 && Math.hypot(e.clientX - lastTap.x, e.clientY - lastTap.y) < 40) {
-    lastTap = null;
-    haptic();
-    bridge.lockScreen();
-  } else lastTap = { at: now, x: e.clientX, y: e.clientY };
-});
 
 // Edge swipe wrap-around: swiping left on the last page wraps to the first page,
 // and swiping right on the first page wraps to the last page.

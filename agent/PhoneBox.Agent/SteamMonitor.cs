@@ -72,6 +72,9 @@ public sealed class SteamMonitor(ConfigStore config, PushStore push, ILogger<Ste
     private string? _user, _avatar, _error;
     private int? _state;
     private long? _webGame;
+    // The web profile's game, only when the Steam client is not open here: with it open, its own flags say right away
+    // whether a game runs, while the profile keeps "in game" for a minute or more after the game is closed.
+    private long? WebGame => _clientRunning ? null : _webGame;
     private string? _webGameName;
     private List<SteamFriend> _friends = [];
     private List<string> _friendIds = [];
@@ -109,7 +112,7 @@ public sealed class SteamMonitor(ConfigStore config, PushStore push, ILogger<Ste
             SteamNow? playing = null;
             if (_running > 0)
                 playing = new(_running, NameOf(_running), _runningSince, _players.GetValueOrDefault(_running));
-            else if (_webGame is { } wg && wg > 0)
+            else if (WebGame is { } wg && wg > 0)
                 playing = new(wg, _webGameName ?? NameOf(wg), _runningSince, _players.GetValueOrDefault(wg));
             var downloads = _downloads;
             return new SteamSnapshot("ok", _error, !string.IsNullOrEmpty(cfg.Steam.ApiKey), _clientRunning, _user, _avatar, _state,
@@ -215,7 +218,7 @@ public sealed class SteamMonitor(ConfigStore config, PushStore push, ILogger<Ste
         if (root is null) { lock (_lock) _root = null; return; }
         var games = SteamLocal.Games(root);
         _contentLog.Read(root); // only this loop touches it
-        var running = SteamLocal.RunningAppId();
+        var running = SteamLocal.RunningAppId(games.Select(g => g.AppId));
         var client = SteamLocal.ClientRunning();
         var user = SteamLocal.User(root);
         Dictionary<long, SteamPlay>? play = null;
@@ -513,7 +516,7 @@ public sealed class SteamMonitor(ConfigStore config, PushStore push, ILogger<Ste
             play = _play.GetValueOrDefault(app);
             recent = _recent.FirstOrDefault(r => r.AppId == app);
             id = _steamId;
-            playing = _running == app || (_running == 0 && _webGame == app);
+            playing = _running == app || (_running == 0 && WebGame == app);
         }
         int? players;
         if (_playersAt.TryGetValue(app, out var pc) && now - pc.At < 300_000) players = pc.Count;
@@ -582,7 +585,7 @@ public sealed class SteamMonitor(ConfigStore config, PushStore push, ILogger<Ste
     /// <summary>The game being played (from the client, else from the web profile).</summary>
     private long? CurrentGame()
     {
-        lock (_lock) return _running > 0 ? _running : _webGame is > 0 ? _webGame : null;
+        lock (_lock) return _running > 0 ? _running : WebGame is > 0 ? WebGame : null;
     }
 
     /// <summary>The game the widgets talk about: the one being played, else the last one played.</summary>

@@ -203,14 +203,22 @@ public static class SteamLocal
 #endif
     }
 
-    /// <summary>The game running now (0 = none), from the client's registry value.</summary>
-    public static long RunningAppId()
+    /// <summary>The game running now (0 = none), from the client's registry values.</summary>
+    public static long RunningAppId(IEnumerable<long>? installed = null)
     {
 #if WINDOWS
         try
         {
             using var k = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"Software\Valve\Steam");
-            return k?.GetValue("RunningAppID") is int id ? id : 0;
+            if (k?.GetValue("RunningAppID") is int id && id > 0) return id;
+            // RunningAppID often stays 0 while a game runs; Steam's per-game flag (Apps\<id>\Running) is set the moment
+            // a game opens and cleared when it closes
+            foreach (var app in installed ?? [])
+            {
+                using var a = k?.OpenSubKey($@"Apps\{app}");
+                if (a?.GetValue("Running") is int r && r != 0) return app;
+            }
+            return 0;
         }
         catch (Exception) { return 0; }
 #else

@@ -623,7 +623,7 @@ class MainActivity : Activity(), SensorEventListener {
                         startActivity(Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
                     }
                     .setNegativeButton("Not now", null)
-                    .show().plainButtons()
+                    .show()
             }
             return false
         }

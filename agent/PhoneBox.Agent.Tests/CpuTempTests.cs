@@ -73,4 +73,39 @@ public sealed class CpuTempTests
 
     [Fact]
     public void NoCpuSensorsMeansNoTemperature() => Assert.Null(Temp(Root()));
+
+    [Fact]
+    public void FahrenheitSensorsConvertToCelsiusAndNullChildrenAreTolerated()
+    {
+        var json = """
+        {
+          "Text": "Sensor",
+          "Children": [
+            { "Text": "Motherboard", "Children": null },
+            {
+              "Text": "Intel Core i7",
+              "HardwareId": "/intelcpu/0",
+              "Children": [
+                { "Text": "Temperatures", "Children": [{ "Text": "CPU Package", "Value": "140,0 °F", "Type": "Temperature", "Children": null }] }
+              ]
+            }
+          ]
+        }
+        """;
+        Assert.Equal(60.0, Temp(json));
+    }
+
+    [Fact]
+    public void A_slow_read_now_and_then_keeps_the_temperature()
+    {
+        // #442: LibreHardwareMonitor answered half of the reads in 600-640 ms; each failure blanked the temperature for 30 s
+        var failures = 0;
+        Assert.Equal((false, TimeSpan.FromSeconds(2)), SystemMonitor.LhmFailed(ref failures));
+        failures = 0; // a read that worked in between
+        Assert.Equal((false, TimeSpan.FromSeconds(2)), SystemMonitor.LhmFailed(ref failures));
+        Assert.Equal((false, TimeSpan.FromSeconds(2)), SystemMonitor.LhmFailed(ref failures));
+        // not running at all: cleared after a few tries, then asked again only every 30 s
+        Assert.Equal((true, TimeSpan.FromSeconds(30)), SystemMonitor.LhmFailed(ref failures));
+        Assert.Equal((true, TimeSpan.FromSeconds(30)), SystemMonitor.LhmFailed(ref failures));
+    }
 }

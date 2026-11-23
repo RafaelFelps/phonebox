@@ -3,7 +3,7 @@ const { test, expect } = require('@playwright/test');
 
 async function show(page, display) {
   await page.clock.install();
-  await page.goto('/panel/');
+  await page.goto('/panel/style.css');
   await page.evaluate((display) => {
     localStorage.clear();
     localStorage.setItem('pb-demo-config', JSON.stringify({
@@ -14,12 +14,17 @@ async function show(page, display) {
       ],
     }));
   }, display);
-  await page.reload();
+  await page.goto('/panel/');
   await expect(page.locator('.w-note').first()).toBeVisible();
   // Until the stored config arrives the panel runs on its defaults, whose night screen covers 00:30-07:30. Between
   // those hours (on the CI's UTC clock too) a tap would only wake that screen; the next tick clears it.
   await expect(page.locator('body')).not.toHaveClass(/night/);
 }
+
+test('burn-in fixture configuration survives delayed default initialization', async ({ page }) => {
+  const { gatedLayout } = require('./layout-ordering');
+  expect(await gatedLayout(page, p => show(p, {}))).toEqual(['one', 'two']);
+});
 
 const shift = (page) => page.evaluate(() => {
   const s = getComputedStyle(document.documentElement);
@@ -50,9 +55,9 @@ test('idle dim covers the panel, and the touch that wakes it presses nothing', a
   await page.clock.fastForward(61_000);
   await expect(page.locator('body')).toHaveClass(/dimmed/);
 
-  // a tap on the page dots (which open the page overview) only brightens the panel ...
-  const dots = await page.locator('#dots').boundingBox();
-  const tap = () => page.mouse.click(dots.x + dots.width / 2, dots.y + dots.height / 2);
+  // a tap on the dots bar's overview button only brightens the panel ...
+  const all = await page.locator('#dots .page-all').boundingBox();
+  const tap = () => page.mouse.click(all.x + all.width / 2, all.y + all.height / 2);
   await tap();
   await expect(page.locator('body')).not.toHaveClass(/dimmed/);
   await page.clock.fastForward(1_000);
@@ -73,8 +78,7 @@ test('a notification brightens a dimmed panel', async ({ page }) => {
 
 test('a page switch waiting behind the open overview does not keep the panel from dimming', async ({ page }) => {
   await show(page, { idleDimMin: 1, switchCountdownSec: 0 });
-  const dots = await page.locator('#dots').boundingBox();
-  await page.mouse.click(dots.x + dots.width / 2, dots.y + dots.height / 2);
+  await page.locator('#dots .page-all').click();
   await expect(page.locator('#overview')).toBeVisible();
   await page.evaluate(() => fetch('/api/notify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: 'Build', text: 'done', page: 'two' }) }));
   await expect(page.locator('#navChip')).toHaveClass(/on/); // waits until the overview is closed

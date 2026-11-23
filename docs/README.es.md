@@ -10,11 +10,22 @@
   <b>Español</b> ·
   <a href="README.it.md">Italiano</a> ·
   <a href="README.pt.md">Português</a> ·
+  <a href="README.pt-BR.md">Português (Brasil)</a> ·
   <a href="README.nl.md">Nederlands</a> ·
   <a href="README.pl.md">Polski</a> ·
   <a href="README.ru.md">Русский</a> ·
+  <a href="README.el.md">Ελληνικά</a> ·
   <a href="README.vi.md">Tiếng Việt</a> ·
-  <a href="README.zh.md">中文 (简体)</a>
+  <a href="README.zh.md">中文 (简体)</a> ·
+  <a href="README.ja.md">日本語</a> ·
+  <a href="README.ko.md">한국어</a> ·
+  <a href="README.id.md">Bahasa Indonesia</a> ·
+  <a href="README.th.md">ไทย</a> ·
+  <a href="README.uk.md">Українська</a> ·
+  <a href="README.hi.md">हिन्दी</a> ·
+  <a href="README.cs.md">Čeština</a> ·
+  <a href="README.ar.md">العربية</a> ·
+  <a href="README.zh-Hant.md">中文（繁體）</a>
 </p>
 
 <p align="center"><b>Convierte un teléfono Android antiguo en un panel de escritorio para tu ordenador.</b><br>
@@ -38,7 +49,7 @@ Windows, Linux y macOS. Sin root, sin cuenta de PhoneBox ni servicio en la nube.
 <p align="center"><img src="hero-0.6.png" width="900" alt="PhoneBox en tres teléfonos"><br>
 <sub>Diseños de ejemplo con datos de demostración.</sub></p>
 
-PhoneBox combina una **aplicación Android** a pantalla completa con un ligero **agente de escritorio**. Diseña tu panel en un editor visual web: **123 widgets**, **30 plantillas**, varias páginas y vista previa en vivo.
+PhoneBox combina una **aplicación Android** a pantalla completa con un ligero **agente de escritorio**. Diseña tu panel en un editor visual web: **124 widgets**, **30 plantillas**, varias páginas y vista previa en vivo.
 
 ## Qué puedes hacer
 

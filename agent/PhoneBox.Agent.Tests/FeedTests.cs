@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
+using System.Text.Json.Nodes;
 using System.Xml;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
@@ -9,6 +10,14 @@ namespace PhoneBox.Agent.Tests;
 
 public sealed class FeedParserTests
 {
+    [Theory]
+    [InlineData("https://www.francetvinfo.fr/monde/a_1.html#xtor=RSS-3-[lestitres]", "https://www.francetvinfo.fr/monde/a_1.html#xtor=RSS-3-%5Blestitres%5D")]
+    [InlineData("https://a.example/p[1]?q=[a]#f", "https://a.example/p%5B1%5D?q=%5Ba%5D#f")]
+    [InlineData("http://[::1]:8080/x[y]", "http://[::1]:8080/x%5By%5D")]
+    [InlineData("https://user@a.example/plain?q=1#top", "https://user@a.example/plain?q=1#top")]
+    public void TheLaunchedAddressHasNoRawBracketsAfterTheHost(string link, string expected) =>
+        Assert.Equal(expected, FeedParser.LaunchAddress(FeedParser.SafeLink(link)!));
+
     private static readonly Uri Base = new("https://example.com/blog/feed.xml");
     private static List<FeedItem> Parse(string xml, int max = 50) => FeedParser.Parse(Encoding.UTF8.GetBytes(xml), Base, "k", max);
 
@@ -333,8 +342,51 @@ public sealed class FeedMonitorTests : IDisposable
 
     private const string Rss = """<rss><channel><item><title>Hello</title><link>https://feeds.example/hello</link><pubDate>Mon, 16 Nov 2026 09:30:00 GMT</pubDate></item><item><title>Nolink</title></item></channel></rss>""";
 
-    private FeedMonitor Monitor(ConfigStore cfg, FeedHttpTests.Fake handler, List<Uri>? opened = null) =>
+    private FeedMonitor Monitor(ConfigStore cfg, HttpMessageHandler handler, List<Uri>? opened = null) =>
         new(cfg, NullLogger<FeedMonitor>.Instance) { Handler = handler, Now = () => _now, Opener = u => opened?.Add(u) };
+
+    private sealed class GatedFeed : HttpMessageHandler
+    {
+        public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            Entered.TrySetResult();
+            await Release.Task.WaitAsync(ct);
+            return FeedHttpTests.Ok(Rss);
+        }
+    }
+
+    [Theory]
+    [InlineData("Blog")]
+    [InlineData("Renamed")]
+    [InlineData(null)]
+    public async Task InFlightFetchPublishesOnlyCurrentSources(string? name)
+    {
+        var cfg = Config();
+        using var handler = new GatedFeed();
+        using var monitor = Monitor(cfg, handler);
+        var pending = monitor.TickAsync(CancellationToken.None);
+        try
+        {
+            await handler.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            if (name != "Blog")
+            {
+                var settings = JsonNode.Parse(File.ReadAllText(cfg.Path))!;
+                if (name is null) settings["feeds"] = new JsonArray();
+                else settings["feeds"]![0]!["name"] = name;
+                Assert.Null(cfg.Save(settings.ToJsonString()));
+            }
+        }
+        finally { handler.Release.TrySetResult(); }
+
+        await pending.WaitAsync(TimeSpan.FromSeconds(5));
+        var actual = monitor.Snapshot().Items.Select(item => item.Source).ToArray();
+        string[] expected = name is null ? [] : [name, name];
+        Assert.True(expected.SequenceEqual(actual),
+            $"EXPECTED: sources=[{string.Join(", ", expected)}] | ACTUAL: sources=[{string.Join(", ", actual)}]");
+    }
 
     [Fact]
     public async Task EachFeedIsFetchedAtMostEveryFifteenMinutes()
@@ -449,17 +501,44 @@ public sealed class FeedMonitorTests : IDisposable
     [Fact]
     public void TheLinkNeverReachesThePhone()
     {
-        var json = System.Text.Json.JsonSerializer.Serialize(new FeedItem("id", "t", "s", 1, "https://secret.example/?token=abc"),
+        var json = System.Text.Json.JsonSerializer.Serialize(new FeedItem("id", "t", "s", 1, "https://secret.example/?token=abc", "Tech"),
             new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web));
         Assert.DoesNotContain("secret", json);
         Assert.Contains("\"openable\":true", json);
+        Assert.Contains("\"category\":\"Tech\"", json);
+    }
+
+    [Fact]
+    public async Task FeedCategoriesAreAttachedToItems()
+    {
+        var cfg = Config(feeds: """[{"name":"TechBlog","url":"https://feeds.example/rss","category":"Technology"}]""");
+        var handler = new FeedHttpTests.Fake(_ => FeedHttpTests.Ok(Rss));
+        using var m = Monitor(cfg, handler);
+        await m.TickAsync(CancellationToken.None);
+        var items = m.Snapshot().Items;
+        Assert.NotEmpty(items);
+        Assert.All(items, i =>
+        {
+            Assert.Equal("TechBlog", i.Source);
+            Assert.Equal("Technology", i.Category);
+        });
     }
 
     [Fact]
     public void FeedAddressesStayOffThePhone()
     {
-        var cfg = Config(feeds: """[{"name":"Private","url":"https://feeds.example/rss?key=s3cret"}]""");
+        var cfg = Config(feeds: """[{"name":"Private","url":"https://feeds.example/rss?key=s3cret","category":"Personal"}]""");
         var pub = System.Text.Json.JsonSerializer.Serialize(cfg.Get().ToPublic());
         Assert.DoesNotContain("s3cret", pub);
+    }
+
+    [Fact]
+    public void FeedCategoryIsNormalizedInConfig()
+    {
+        var longCat = new string('x', 50);
+        var cfg = Config(feeds: $$"""[{"name":"Blog","url":"https://feeds.example/rss","category":"  {{longCat}}  "}]""");
+        var feed = Assert.Single(cfg.Get().Feeds);
+        Assert.Equal(40, feed.Category.Length);
+        Assert.Equal(new string('x', 40), feed.Category);
     }
 }

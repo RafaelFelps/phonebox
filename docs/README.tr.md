@@ -10,11 +10,22 @@
   <a href="README.es.md">Español</a> ·
   <a href="README.it.md">Italiano</a> ·
   <a href="README.pt.md">Português</a> ·
+  <a href="README.pt-BR.md">Português (Brasil)</a> ·
   <a href="README.nl.md">Nederlands</a> ·
   <a href="README.pl.md">Polski</a> ·
   <a href="README.ru.md">Русский</a> ·
+  <a href="README.el.md">Ελληνικά</a> ·
   <a href="README.vi.md">Tiếng Việt</a> ·
-  <a href="README.zh.md">中文 (简体)</a>
+  <a href="README.zh.md">中文 (简体)</a> ·
+  <a href="README.ja.md">日本語</a> ·
+  <a href="README.ko.md">한국어</a> ·
+  <a href="README.id.md">Bahasa Indonesia</a> ·
+  <a href="README.th.md">ไทย</a> ·
+  <a href="README.uk.md">Українська</a> ·
+  <a href="README.hi.md">हिन्दी</a> ·
+  <a href="README.cs.md">Čeština</a> ·
+  <a href="README.ar.md">العربية</a> ·
+  <a href="README.zh-Hant.md">中文（繁體）</a>
 </p>
 
 <p align="center"><b>Eski bir Android telefonu bilgisayarınız için bir masaüstü kontrol paneline dönüştürün.</b><br>
@@ -38,7 +49,7 @@ Windows, Linux ve macOS. Root, PhoneBox hesabı veya bulut hizmeti gerekmez.</p>
 <p align="center"><img src="hero-0.6.png" width="900" alt="Otomasyon, ana sayfa ve planlayıcı sayfalarını gösteren üç telefonda PhoneBox"><br>
 <sub>Demo verileriyle örnek düzenler.</sub></p>
 
-PhoneBox, tam ekran bir **Android uygulamasını** küçük bir **masaüstü ajanıyla** eşleştirir. Tarayıcı tabanlı görsel düzenleyicide panelinizi oluşturun: **123 widget**, **30 şablon**, çoklu sayfalar ve canlı önizleme. Birden fazla telefonu kendi düzenleriyle bağlayın veya tek bir telefonu eşleştirilmiş bilgisayarlar arasında değiştirin.
+PhoneBox, tam ekran bir **Android uygulamasını** küçük bir **masaüstü ajanıyla** eşleştirir. Tarayıcı tabanlı görsel düzenleyicide panelinizi oluşturun: **124 widget**, **30 şablon**, çoklu sayfalar ve canlı önizleme. Birden fazla telefonu kendi düzenleriyle bağlayın veya tek bir telefonu eşleştirilmiş bilgisayarlar arasında değiştirin.
 
 ## Neler yapabilirsiniz?
 

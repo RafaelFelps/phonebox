@@ -38,8 +38,8 @@ Setup installs the [latest release](https://github.com/ersinkoc/phonebox/release
    | Linux | `~/.local/share/PhoneBox/app` | `~/.config/PhoneBox` |
    | macOS | `~/Library/Application Support/PhoneBox/app` | `~/Library/Application Support/PhoneBox` |
 
-   Then it asks whether to start PhoneBox at login: a Startup-folder shortcut on Windows, a systemd user service
-   on Linux, a launchd agent on macOS.
+   It adds a Start Menu shortcut on Windows, and asks whether to start PhoneBox at login: a Startup-folder shortcut
+   on Windows, a systemd user service on Linux, a launchd agent on macOS.
 6. **Puts the app on the phone over USB**, if you want. It shows how to turn on USB debugging and waits for the phone.
 7. **Starts the agent** and opens its settings at <http://127.0.0.1:8765>.
 
@@ -76,12 +76,12 @@ curl -fsSL https://raw.githubusercontent.com/ersinkoc/phonebox/main/setup.sh | b
 
 <details><summary><b>Before you run it: warnings</b></summary>
 
-- **The Windows agent is not code-signed yet.** The [SignPath Foundation](../README.md#code-signing-policy) application is pending.
+- **The Windows agent is not code-signed yet.** [SignPath Foundation](../README.md#code-signing-policy) accepted the project; releases are signed once its release certificate is issued.
   Windows SmartScreen or an antivirus may warn about a new, unsigned program, and some antivirus engines have flagged
   it ([#69](https://github.com/ersinkoc/phonebox/issues/69)). Setup only installs a file that matches the release
   checksum. If your antivirus removes `PhoneBoxAgent.exe`, setup says so; restore it from quarantine or report it.
 - **Smart App Control** (Windows 11) blocks programs that are neither signed nor known to Microsoft. The agent is
-  not code-signed yet (signing through SignPath Foundation is pending, [#56](https://github.com/ersinkoc/phonebox/issues/56)),
+  not code-signed yet (signing through SignPath Foundation waits for its release certificate, [#56](https://github.com/ersinkoc/phonebox/issues/56)),
   so with Smart App Control on, Windows refuses to start it: "An Application Control policy has blocked this file"
   ([#69](https://github.com/ersinkoc/phonebox/issues/69)). Setup warns you first, still installs it, and explains
   if Windows blocks it. Please keep Smart App Control on: on older Windows builds it cannot be turned back on without
@@ -96,8 +96,13 @@ curl -fsSL https://raw.githubusercontent.com/ersinkoc/phonebox/main/setup.sh | b
 - **Linux USB permissions**: if `adb devices` shows `no permissions`, adb also needs udev rules. Install
   `android-sdk-platform-tools-common` on Debian/Ubuntu or `android-udev` on Arch. Some systems also need the
   `plugdev` group (`sudo usermod -aG plugdev $USER`, then log out and in). Setup points this out when it happens.
-- **On macOS**, the agent is signed ad hoc, not with an Apple Developer ID. The first time, macOS may ask whether
-  it may control Music or Spotify (for Now Playing), or accept incoming connections (with Wi-Fi on).
+- **On macOS**, the agent is signed with PhoneBox's own certificate, not an Apple Developer ID. The first time,
+  macOS may ask whether it may control Music or Spotify (for Now Playing), or accept incoming connections (with Wi-Fi
+  on). Shortcuts that press keys, and the Trackpad widget (its mouse events and its gestures), need *System Settings ›
+  Privacy & Security › Accessibility* for PhoneBoxAgent; it
+  carries over to later updates. Before 0.9.22 the agent was signed ad hoc, and macOS dropped the permission with every
+  update, so after updating from an older version allow it once more: remove PhoneBoxAgent there with *−* and add it
+  again, even if it is listed and switched on ([#269](https://github.com/ersinkoc/phonebox/issues/269)).
 - **Windows USB drivers**: if the phone never appears, Windows may need its USB driver. Google phones use the
   Google USB Driver; other brands have one on their support site.
 - **Scoop users**: setup stops if PhoneBox is installed with Scoop, so two copies don't fight over the same port.
@@ -127,7 +132,13 @@ The settings are at <http://127.0.0.1:8765>, on Windows also from the tray icon.
 
 - **Manual download**: the [release](https://github.com/ersinkoc/phonebox/releases/latest) has the signed Android
   APK and agents for Windows x64, Linux x64/ARM64 and macOS Apple silicon/Intel, with SHA-256 checksums and build
-  provenance. Unzip the agent and run it. It can update itself only from the install folder in the table above.
+  provenance. Unzip the agent and run it. It can update itself only from the install folder in the table above. On a Mac,
+  the `.dmg` holds `PhoneBox.app`: drag it to Applications (or `~/Applications`) and open it. It has no window; the settings
+  are at http://127.0.0.1:8765. If you installed with `setup.sh`, that agent is already running and holds the port, so first quit it
+  and run `launchctl unload ~/Library/LaunchAgents/net.oxog.phonebox.agent.plist` (otherwise opening the app only reopens its settings,
+  and the login job starts the old agent again). It is not notarized, so macOS blocks it the first time: open it once, then allow it in *System Settings › Privacy &
+  Security › Open Anyway* (right-click › Open works only up to macOS 14). The Accessibility permission is recorded per
+  app, so allow PhoneBox there once more when you move between this app and an agent started from the zip or `setup.sh`.
 - **Scoop** (Windows), which can then put the app on the phone from *Settings › General › Install the phone app*:
 
   ```powershell
@@ -151,6 +162,21 @@ The settings are at <http://127.0.0.1:8765>, on Windows also from the tray icon.
   ./scripts/install.sh --apk --autostart  # systemd user service (Linux) or launchd agent (macOS)
   ```
 
+### Stop and start the agent
+
+On Windows, use **Quit** in the tray menu. Start it again from the Start Menu (search for **PhoneBox**); with
+**Start with Windows** on, it also starts at the next sign-in.
+On Linux, setup installs a systemd user service named `phonebox` (no sudo needed):
+
+```sh
+systemctl --user stop phonebox            # off until the next login; start / restart / status work the same way
+systemctl --user disable --now phonebox   # off, and no longer started at login (enable --now turns both back on)
+```
+
+On macOS, `launchctl unload ~/Library/LaunchAgents/net.oxog.phonebox.agent.plist` stops it, and `launchctl load`
+with the same path starts it again. While the agent is off, the phone shows that it is offline and reconnects by
+itself once the agent runs again.
+
 ### Uninstall
 
 ```powershell
@@ -172,7 +198,7 @@ deletes the settings, and `-Apk` / `--apk` removes the app from the connected ph
 |---|---|---|---|
 | CPU, RAM, network, disks, ping | ✓ | ✓ | ✓ |
 | CPU temperature | LibreHardwareMonitor | ✓ (hwmon) | — |
-| GPU load, VRAM, temperature | Any vendor (Windows GPU counters); NVIDIA adds power, fan and clocks (`nvidia-smi`), AMD / Intel add them with LibreHardwareMonitor | NVIDIA (`nvidia-smi`), AMD (`amdgpu` sysfs), Intel (clock) | Apple silicon (`ioreg`) |
+| GPU load, VRAM, temperature | Any vendor (Windows GPU counters); NVIDIA adds power, fan and clocks (`nvidia-smi`), AMD / Intel add them with LibreHardwareMonitor | NVIDIA (`nvidia-smi`), AMD (`amdgpu` sysfs), Intel (`i915` / `xe`: load and clock) | Apple silicon (`ioreg`) |
 | Now playing + controls | ✓ (any app) | ✓ (MPRIS via `playerctl`) | System media, including browser video, with `nowplaying-cli`; Spotify and Music fallback |
 | Volume | ✓ | ✓ (`wpctl` / `pactl`) | ✓ |
 | Processes, end one / all | ✓ | ✓ (your own) | ✓ (your own) |
@@ -214,8 +240,15 @@ and may differ slightly in older ones.
 
 ## Wi-Fi & Tailscale
 
-Turn on **Settings › General › Wi-Fi & Tailscale** and restart the agent when asked. Then pair the phone in one
-of two ways:
+Wi-Fi is off by default. To turn it on:
+
+1. Open the settings page on the PC: click the tray icon, or go to `http://127.0.0.1:8765` in a browser.
+2. In **General**, scroll down to **Wi-Fi & Tailscale** and turn on **Let the phone connect without the USB cable**.
+3. Click **Save**, then **Restart to apply** at the top of the page. The line next to **Pair a phone over Wi-Fi**
+   says "Listening on port 8766" once it works.
+4. Allow PhoneBox through the firewall when Windows asks.
+
+Then pair the phone in one of two ways:
 
 - **Without a cable:** click **Pair a phone over Wi-Fi**. The window shows a QR code that downloads the app and one
   that pairs. Scan the second with the phone's camera, open the link and tap **Open in PhoneBox**; the phone asks you
@@ -246,6 +279,9 @@ phone; over Wi-Fi the panel shows "plug in USB to update") and replaces its own 
 accepts an update signed with the same key as the installed app; the agent never uninstalls to force one.
 When GitHub turns away anonymous requests (it answers 503 / 504 now and then), the agent asks again with the
 [GitHub CLI](https://cli.github.com)'s token if `gh` is signed in; the token only goes to `api.github.com`.
+A Mac agent running from `PhoneBox.app` (the `.dmg` of a release) updates the same way, by replacing the whole app: it
+downloads the release's `PhoneBox-<version>-<rid>.dmg`, checks it against the release checksums and the new app's signature, swaps it
+in and restarts. The app must sit in a folder you can write to, such as `~/Applications`.
 See the [changelog](../CHANGELOG.md).
 
 ## FAQ & troubleshooting
@@ -267,7 +303,7 @@ cable, or a port straight on the computer instead of a hub or a front-panel port
 
 <details><summary><b>Some widgets show "—" or "No data".</b></summary>
 
-GPU values come from Windows itself (the temperature, as in Task Manager, needs Windows 10 2004 or later and a WDDM 2.4 driver), `nvidia-smi` for NVIDIA cards, `amdgpu` sysfs on Linux, or IORegistry on Apple silicon. The GPU hot spot and an AMD or Intel card's watts, fan and clocks need LibreHardwareMonitor. CPU temperature needs LibreHardwareMonitor's web server on port 8085,
+GPU values come from Windows itself (the temperature, as in Task Manager, needs Windows 10 2004 or later and a WDDM 2.4 driver), `nvidia-smi` for NVIDIA cards, `amdgpu` sysfs on Linux, an Intel card's DRM usage counters on Linux, or IORegistry on Apple Silicon. An Intel card's load on Linux needs a kernel whose driver exposes busy counters in fdinfo (`i915` from kernel 5.19, `xe`); a card whose programs never report them shows no load. A program that starts using the GPU is picked up within about 30 seconds and counts from the reading after that, and programs of other users are counted only when Linux lets the agent read them (normally as root or with `CAP_SYS_PTRACE`). The GPU hot spot and an AMD or Intel card's watts, fan and clocks need LibreHardwareMonitor. CPU temperature needs LibreHardwareMonitor's web server on port 8085,
 GitHub needs `gh auth login`, quotas and sessions need Claude Code / Codex to have been used on this PC.
 </details>
 

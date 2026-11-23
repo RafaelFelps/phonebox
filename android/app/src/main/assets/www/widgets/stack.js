@@ -1,4 +1,4 @@
-import { h, haptic, t } from '../main.js';
+import { h, haptic, t, tp } from '../main.js';
 import { W } from '../registry.js';
 
 function parseWidgets(raw) {
@@ -196,7 +196,7 @@ W.stack = {
       });
       pauseBtn = h('button', 'stack-pause');
       pauseBtn.type = 'button';
-      pauseBtn.setAttribute('aria-label', 'Pause stack rotation');
+      pauseBtn.setAttribute('aria-label', tp('Pause stack rotation'));
       pauseBtn.innerHTML =
         '<svg class="i-pause" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 5h4v14H7zM13 5h4v14h-4z"/></svg>' +
         '<svg class="i-play" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>';
@@ -246,7 +246,10 @@ W.stack = {
     wrap.style.touchAction = 'pan-x';
     let startX = 0, startY = 0, startT = 0, swiping = false;
     wrap.addEventListener('touchstart', (e) => {
-      swiping = e.touches.length === 1 && !e.target.closest('button, input, textarea, select, a, [contenteditable], .s-list');
+      // a list that scrolls keeps its vertical swipes (News feeds); one that fits still lets the stack cycle
+      const scroller = e.target.closest('.fd-list');
+      swiping = e.touches.length === 1 && !e.target.closest('button, input, textarea, select, a, [contenteditable], .s-list')
+        && !(scroller && scroller.scrollHeight > scroller.clientHeight + 1);
       if (!swiping) return;
       startX = e.touches[0].clientX;
       startY = e.touches[0].clientY;

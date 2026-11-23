@@ -1,4 +1,4 @@
-import { $, API, PANEL_HEADERS, ago, api, h, haptic, safeFetch, store, t, tick, toast } from '../main.js';
+import { $, API, PANEL_HEADERS, ago, api, h, haptic, icon, safeFetch, store, t, tick, toast, tp } from '../main.js';
 import { W } from '../registry.js';
 import { cached, every, fmtNum, lines, pctSpan, sparkLine } from './helpers.js';
 
@@ -33,16 +33,27 @@ W.hackernews = {
 };
 
 // Headlines from the RSS / Atom feeds set up on the PC. The agent fetches them (at most every 15 minutes); the
-// phone gets titles, the feed's name and times, and opens an article on the PC by its id.
+// phone gets titles, the feed's name and times, and opens an article on the PC by its id. The list scrolls, and an
+// article opened from this phone loses its accent bar (the ids it opened are kept on the phone).
+const FEEDS_READ = 'feeds-read', FEEDS_READ_MAX = 500, FEEDS_SHOWN = 60;
+const feedsRead = () => new Set(store.get(FEEDS_READ, []));
+const markFeedRead = (id) => {
+  const ids = store.get(FEEDS_READ, []).filter((x) => x !== id);
+  ids.push(id);
+  store.set(FEEDS_READ, ids.slice(-FEEDS_READ_MAX));
+};
 W.feeds = {
   needs: ['tick'],
   create(box, { o }) {
     const only = String(o.feed || '').trim().toLowerCase();
+    const onlyCat = String(o.category || '').trim().toLowerCase();
     const showSource = o.showSource !== false, showTime = o.showTime !== false;
+    const lineCount = ['2', '3'].includes(String(o.lines)) ? +o.lines : 1;
     const list = h('div', 'fd-list', h('div', 'empty', t('w.loading')));
+    if (lineCount > 1) { list.classList.add('wrap'); list.style.setProperty('--fl', lineCount); }
     const sub = h('span', 'w-sub', '');
     box.style.setProperty('--c', '#f59e0b');
-    if (o.title !== '') box.append(h('div', 'w-title', o.title || 'News', sub));
+    if (o.title !== '') box.append(h('div', 'w-title', o.title || tp('News'), sub));
     box.append(list);
     let data = null, lastKey = '', busy = null;
     const open = async (it) => {
@@ -57,30 +68,41 @@ W.feeds = {
       try {
         const r = await fetch(`${API}/feeds/open?id=${encodeURIComponent(it.id)}`, { method: 'POST', cache: 'no-store', headers: PANEL_HEADERS, signal: ctl.signal });
         const j = await r.json().catch(() => ({}));
-        if (r.ok) toast(t('w.feeds.opening'), 'ok'); else toast(j.error || t('w.feeds.openFailed'), 'err');
+        if (r.ok) { toast(t('w.feeds.opening'), 'ok'); markFeedRead(it.id); lastKey = ''; render(); }
+        else toast(j.error || t('w.feeds.openFailed'), 'err');
       } catch (_) { toast(t('panel.pcNoAnswer'), 'err'); }
       finally { clearTimeout(timer); busy = null; }
     };
     const render = () => {
-      const items = (data?.items || []).filter((i) => !only || i.source.toLowerCase() === only);
-      const rows = Math.max(1, Math.floor((box.clientHeight - (o.title !== '' ? 30 : 6)) / 33));
-      const key = JSON.stringify([!!data, data?.canOpen, items.slice(0, rows).map((i) => i.id), data?.errors, rows, Math.floor(Date.now() / 60_000)]);
+      const items = (data?.items || []).filter((i) => {
+        if (only && i.source.toLowerCase() !== only) return false;
+        if (onlyCat && (i.category || '').toLowerCase() !== onlyCat) return false;
+        return true;
+      }).slice(0, FEEDS_SHOWN);
+      const canOpen = o.open === true && !!data?.canOpen;
+      const read = feedsRead();
+      const key = JSON.stringify([!!data, canOpen, items.map((i) => i.id + (read.has(i.id) ? '.' : '')), data?.errors, Math.floor(Date.now() / 60_000)]);
       if (key === lastKey) return;
       lastKey = key;
       const err = (data?.errors || []).filter((e) => !only || e.toLowerCase().startsWith(only + ':'));
-      sub.textContent = err.length ? '⚠' : '';
+      sub.replaceChildren(...(err.length ? [icon('warn')] : []));
       sub.title = err.join('\n');
       if (!data) return;
       if (!items.length) {
-        list.replaceChildren(h('div', 'empty', err.length ? err[0] : data.updated && (data.items || []).length ? t('w.feeds.noneFrom', { name: o.feed }) : t('w.feeds.addInSettings')));
+        const filterName = o.category && o.feed ? `${o.category} · ${o.feed}` : (o.category || o.feed);
+        list.replaceChildren(h('div', 'empty', err.length ? err[0] : data.updated && (data.items || []).length ? t('w.feeds.noneFrom', { name: filterName }) : t('w.feeds.addInSettings')));
         return;
       }
-      list.replaceChildren(...items.slice(0, rows).map((it) => {
+      // the list is rebuilt every minute (the ages): keep where it was scrolled to
+      const top = list.scrollTop;
+      list.replaceChildren(...items.map((it) => {
         const meta = [showSource ? it.source : '', showTime && it.published ? ago(it.published) : ''].filter(Boolean).join(' · ');
-        const row = h('div', 'fd-i' + (it.openable && o.open === true && data.canOpen ? ' link' : ''), h('div', 'fd-t', it.title), meta ? h('div', 'fd-m', meta) : null);
+        const link = it.openable && canOpen;
+        const row = h('div', 'fd-i' + (link ? ' link' + (read.has(it.id) ? ' read' : '') : ''), h('div', 'fd-t', it.title), meta ? h('div', 'fd-m', meta) : null);
         row.onclick = () => open(it);
         return row;
       }));
+      list.scrollTop = top;
     };
     const load = every(60_000, async () => {
       try { data = await api('/feeds', 'GET', 5000); lastKey = ''; render(); }
@@ -107,7 +129,7 @@ W.exchange = {
           list.replaceChildren(h('div', 'empty', t('w.ratesUnavailable')));
           return false;
         }
-        box.querySelector('.w-sub').textContent = 'ECB · ' + days[days.length - 1];
+        box.querySelector('.w-sub').textContent = tp('ECB · ') + days[days.length - 1];
         list.replaceChildren(...syms.map((s) => {
           const series = days.map((k) => d.rates[k]?.[s]).filter((v) => Number.isFinite(v) && v > 0);
           const last = series[series.length - 1], prev = series[series.length - 2];
@@ -129,7 +151,7 @@ W.crypto = {
     const coins = lines(o.coins, ['bitcoin', 'ethereum', 'solana']).map((s) => s.toLowerCase()).slice(0, 8);
     const cur = (o.currency || 'usd').toLowerCase();
     const list = h('div', 'fx-list', h('div', 'empty', t('w.loading')));
-    box.append(h('div', 'w-title', 'Crypto', h('span', 'w-sub', cur.toUpperCase() + ' · 24 h · 7 d')), list);
+    box.append(h('div', 'w-title', tp('Crypto'), h('span', 'w-sub', cur.toUpperCase() + ' · 24 h · 7 d')), list);
     const load = every(5 * 60_000, async () => {
       try {
         const d = await cached(`cg:${cur}:${coins}`, `https://api.coingecko.com/api/v3/coins/markets?vs_currency=${cur}&ids=${coins.join(',')}&sparkline=true&price_change_percentage=24h`, 5 * 60_000);

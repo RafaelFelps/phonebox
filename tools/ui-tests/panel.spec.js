@@ -1,6 +1,12 @@
 // UI tests of the panel and the settings page, against the web demo. They only use what a person sees and does
 // (DOM, keys, clicks) plus the demo's PhoneBoxDemo helper, never the panel's internals.
 const { test, expect } = require('@playwright/test');
+const { staleState } = require('./state-ordering');
+
+test('a late poll preserves the newer state and metric history', async ({ page }) => {
+  const actual = await staleState(page, { edges: true });
+  expect(actual).toEqual({ host: 'newest', cpu: 22, hist: 22, equal: 'equal', withoutTimestamp: 'without timestamp' });
+});
 
 /** Fails the test on any console error or uncaught exception (outside services being down does not count). */
 function watchErrors(page) {
@@ -44,6 +50,11 @@ test('no widget fails to build on any page', async ({ page }) => {
 test('every widget in the catalogue builds and runs without errors', async ({ page }) => {
   test.setTimeout(90_000); // Each catalog page runs its render and polling lifecycle; the catalog now exceeds 100 types.
   const errors = watchErrors(page);
+  await page.route('**/agent/api/steam/avatar?id=*', (route) => route.fulfill({
+    status: 200,
+    contentType: 'image/svg+xml',
+    body: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"><circle cx=".5" cy=".5" r=".5"/></svg>',
+  }));
   await page.goto('/panel/');
   // one page per widget type, at its default size, through the demo's stored settings
   const count = await page.evaluate(async () => {
@@ -287,6 +298,21 @@ test('a Claude Code permission prompt can be answered', async ({ page }) => {
   await expect(prompt).toBeHidden();
 });
 
+test('a Codex permission prompt shows the Codex mark, project and working directory', async ({ page }) => {
+  await page.goto('/panel/');
+  await expect(page.locator('.w').first()).toBeVisible();
+  await page.evaluate(() => window.PhoneBoxDemo.ask({ source: 'Codex', project: 'phonebox', cwd: '/Users/me/Desktop/applications/phonebox',
+    tool: 'Run a command', detail: 'npm test', description: 'Run the test suite' }));
+  const prompt = page.locator('#approval');
+  await expect(prompt).toBeVisible();
+  await expect(page.locator('#apLogo')).toHaveText('◎');
+  await expect(page.locator('#apSource')).toHaveText('Codex');
+  await expect(page.locator('#apProject')).toHaveText('phonebox');
+  await expect(page.locator('#apCwd')).toHaveText('/Users/me/Desktop/applications/phonebox');
+  await prompt.getByRole('button', { name: 'Deny' }).click();
+  await expect(prompt).toBeHidden();
+});
+
 test('the page dots and the Allow / Deny buttons can sit at the top (#181)', async ({ page }) => {
   await page.goto('/panel/');
   await page.evaluate(() => {
@@ -451,6 +477,28 @@ test('the live preview in the layout editor runs the real panel', async ({ page 
   // picking another page in the editor moves the preview there
   await page.locator('#pageTabs .ptab').nth(2).click();
   await expect.poll(() => preview.locator('#dots i').evaluateAll((d) => d.findIndex((x) => x.classList.contains('on')))).toBe(2);
+});
+
+test('the live preview does not enter unreachable night mode', async ({ page }) => {
+  await page.clock.install({ time: new Date('2026-01-01T12:00:00Z') });
+  await page.goto('/panel/');
+  await page.evaluate(() => {
+    const iframe = document.createElement('iframe');
+    iframe.id = 'night-preview';
+    iframe.src = '/panel/?preview=1';
+    document.body.appendChild(iframe);
+  });
+  const preview = page.frameLocator('#night-preview');
+  await expect(preview.locator('.w').first()).toBeVisible();
+  await preview.locator('body').evaluate(async () => {
+    const panel = await import('/panel/main.js');
+    panel.cfg.night.enabled = false;
+    panel.cfg.display.nightWhenUnreachable = true;
+    panel.cfg.display.unreachableNightDelayMin = 1;
+    panel.setOnline(false);
+  });
+  await page.clock.runFor(61_000);
+  await expect(preview.locator('body')).not.toHaveClass(/(^|\s)night($|\s)/);
 });
 
 test('rule options and page switching settings are there', async ({ page }) => {

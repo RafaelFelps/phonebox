@@ -6,6 +6,23 @@ using Xunit;
 /// <summary>Config normalization: templates, the pre-0.6.2 page migration, grid limits, ids and what the phone sees.</summary>
 public class ConfigTests
 {
+    [Fact]
+    public void NullOrMissingSteamApiKeyKeepsStoredKeyButEmptyCanClearIt()
+    {
+        var proposed = JsonSerializer.Deserialize<AgentConfig>("{}", ConfigStore.ReadOpts)!;
+        Assert.True(ConfigStore.PreserveSteamApiKey(proposed, "stored-secret"));
+        Assert.Equal("stored-secret", proposed.Steam.ApiKey);
+
+        proposed = JsonSerializer.Deserialize<AgentConfig>("{\"steam\":{\"apiKey\":null}}", ConfigStore.ReadOpts)!;
+        Assert.True(ConfigStore.PreserveSteamApiKey(proposed, "stored-secret"));
+        Assert.Equal("stored-secret", proposed.Steam.ApiKey);
+
+        proposed.Steam.ApiKey = "";
+        Assert.False(ConfigStore.PreserveSteamApiKey(proposed, "stored-secret"));
+        Assert.Equal("", proposed.Steam.ApiKey);
+        Assert.False(ConfigStore.PreserveSteamApiKey(proposed, null));
+    }
+
     private static AgentConfig Load(string json)
     {
         var path = Path.Combine(Path.GetTempPath(), $"phonebox-cfg-{Guid.NewGuid():N}.json");
@@ -25,6 +42,46 @@ public class ConfigTests
         Assert.NotEqual(c.Lan.Token, c.Lan.WebhookToken);
     }
 
+    // The panel converts the forecast itself, so the only values the agent hands it are the two it knows how to show.
+    [Theory]
+    [InlineData("""{"weather":{"city":"Tallinn","lat":59.437,"lon":24.745}}""", "celsius")]
+    [InlineData("""{"weather":{"unit":"fahrenheit"}}""", "fahrenheit")]
+    [InlineData("""{"weather":{"unit":" Fahrenheit "}}""", "fahrenheit")]
+    [InlineData("""{"weather":{"unit":"kelvin"}}""", "celsius")]
+    [InlineData("""{"weather":{"unit":null}}""", "celsius")]
+    [InlineData("""{"weather":{"city":"Oslo","unit":123}}""", "celsius")]
+    [InlineData("""{"weather":{"city":"Oslo","unit":true}}""", "celsius")]
+    [InlineData("""{"weather":{"city":"Oslo","unit":{"deep":[1]}}}""", "celsius")]
+    public void WeatherUnitDefaultsToCelsiusAndReachesThePhone(string json, string expected)
+    {
+        var c = Load(json);
+        Assert.Equal(expected, c.Weather.Unit);
+        // a bad unit costs only the unit: the rest of the weather section (and the file) still loads
+        if (json.Contains("Oslo")) Assert.Equal("Oslo", c.Weather.City);
+        var weather = JsonSerializer.SerializeToElement(c.ToPublic(), ConfigStore.WriteOpts).GetProperty("weather");
+        Assert.Equal(expected, weather.GetProperty("unit").GetString());
+    }
+
+    // The model goes into the phone's forecast URL, so only the names the settings offer get through.
+    [Theory]
+    [InlineData("""{"weather":{"city":"Tallinn","lat":59.437,"lon":24.745}}""", "")]
+    [InlineData("""{"weather":{"model":"gfs_seamless"}}""", "gfs_seamless")]
+    [InlineData("""{"weather":{"model":" GFS_Seamless "}}""", "gfs_seamless")]
+    [InlineData("""{"weather":{"model":"ecmwf_ifs025"}}""", "ecmwf_ifs025")]
+    [InlineData("""{"weather":{"model":"gfs_seamless&daily=x"}}""", "")]
+    [InlineData("""{"weather":{"model":"accuweather"}}""", "")]
+    [InlineData("""{"weather":{"model":null}}""", "")]
+    [InlineData("""{"weather":{"city":"Oslo","model":42}}""", "")]
+    [InlineData("""{"weather":{"city":"Oslo","model":["gfs_seamless"]}}""", "")]
+    public void WeatherModelIsOneOfTheOfferedModelsOrBestMatch(string json, string expected)
+    {
+        var c = Load(json);
+        Assert.Equal(expected, c.Weather.Model);
+        if (json.Contains("Oslo")) Assert.Equal("Oslo", c.Weather.City);
+        var weather = JsonSerializer.SerializeToElement(c.ToPublic(), ConfigStore.WriteOpts).GetProperty("weather");
+        Assert.Equal(expected, weather.GetProperty("model").GetString());
+    }
+
     [Fact]
     public void BurnInProtectionIsOffByDefaultAndTheDimTimeIsClamped()
     {
@@ -37,12 +94,87 @@ public class ConfigTests
     }
 
     [Fact]
+    public void UnreachableNightScreenIsOffByDefaultAndDelayIsClamped()
+    {
+        var defaults = Load("{}").Display;
+        Assert.False(defaults.NightWhenUnreachable);
+        Assert.Equal(5, defaults.UnreachableNightDelayMin);
+        Assert.Equal(30, Load("""{ "display": { "nightWhenUnreachable": true, "unreachableNightDelayMin": 999 } }""").Display.UnreachableNightDelayMin);
+        Assert.Equal(1, Load("""{ "display": { "nightWhenUnreachable": true, "unreachableNightDelayMin": -5 } }""").Display.UnreachableNightDelayMin);
+        Assert.True(Load("""{ "display": { "nightWhenUnreachable": true } }""").Display.NightWhenUnreachable);
+    }
+
+    [Fact]
     public void TemplatesExpandIntoWidgets()
     {
         var c = Load("""{ "pages": [ { "template": "music" }, { "template": "music" } ] }""");
         Assert.Equal(["music", "music-2"], c.Pages.Select(p => p.Id));
         Assert.Contains(c.Pages[0].Widgets!, w => w.Type == "media");
         Assert.Null(c.Pages[0].Template);
+    }
+
+    [Theory]
+    [InlineData("Desk / Live", "desk-live")]
+    [InlineData("Desk + Live", "desk-live-2")]
+    [InlineData("kitchen", "kitchen")]
+    public void PageReferencesFollowIdNormalizationOnSaveAndReload(string reference, string expectedId)
+    {
+        var directory = Directory.CreateTempSubdirectory("phonebox-page-references-");
+        try
+        {
+            var path = Path.Combine(directory.FullName, "config.json");
+            var json = JsonSerializer.Serialize(new
+            {
+                pages = new[] { new { id = "Desk / Live" }, new { id = "Desk + Live" }, new { id = "kitchen" } },
+                display = new { homePage = reference },
+                phones = new[] { new { id = "desk", pages = new[] { reference } } },
+                rules = new[] { new { when = "time", then = "goto", page = reference } },
+            });
+            var store = new ConfigStore(path);
+            Assert.Null(store.Save(json));
+
+            foreach (var config in new[] { store.Get(), new ConfigStore(path).Get() })
+            {
+                Assert.Equal(["desk-live", "desk-live-2", "kitchen"], config.Pages.Select(p => p.Id));
+                var actual = (Home: config.Display.HomePage, Phone: string.Join(",", config.PagesFor("desk").Select(p => p.Id)),
+                    Rule: Assert.Single(config.Rules).Page);
+                Assert.Equal((expectedId, expectedId, expectedId), actual);
+            }
+        }
+        finally { directory.Delete(recursive: true); }
+    }
+
+    [Fact]
+    public void ANewTemplateCannotTakeAnExistingPagesId()
+    {
+        var config = Load("""
+            {
+              "pages": [
+                { "template": "music" },
+                { "id": "music", "title": "Existing music page" }
+              ]
+            }
+            """);
+
+        Assert.Equal(["music-2", "music"], config.Pages.Select(p => p.Id));
+    }
+
+    [Fact]
+    public void ANewWidgetCannotTakeAnExistingWidgetsPersistenceKey()
+    {
+        var config = Load("""
+            {
+              "pages": [{
+                "id": "desk",
+                "widgets": [
+                  { "type": "timer" },
+                  { "type": "timer", "id": "timer" }
+                ]
+              }]
+            }
+            """);
+
+        Assert.Equal(["timer-2", "timer"], Assert.Single(config.Pages).Widgets!.Select(w => w.Id));
     }
 
     [Fact]
@@ -177,6 +309,21 @@ public class ConfigTests
     }
 
     [Fact]
+    public void ThePhoneLearnsWhichShortcutPicturesAreUploads()
+    {
+        // only an uploaded picture may fill a Big button; a program's own icon (also with an iconRev) may not
+        var c = Load("""{ "shortcuts": [ { "id": "up", "label": "Up", "cmd": "a.exe" }, { "id": "own", "label": "Own", "cmd": "b.exe" } ] }""");
+        var pub = JsonSerializer.SerializeToElement(c.ToPublic(null, s => (7, s.Id == "up")));
+        var byId = pub.GetProperty("shortcuts").EnumerateArray().ToDictionary(s => s.GetProperty("Id").GetString()!);
+        Assert.True(byId["up"].GetProperty("iconUpload").GetBoolean());
+        Assert.False(byId["own"].GetProperty("iconUpload").GetBoolean());
+        Assert.Equal(7, byId["own"].GetProperty("iconRev").GetInt64());
+        // without the lookup (tests, older callers) nothing counts as an upload
+        Assert.All(JsonSerializer.SerializeToElement(c.ToPublic()).GetProperty("shortcuts").EnumerateArray(),
+            s => Assert.False(s.GetProperty("iconUpload").GetBoolean()));
+    }
+
+    [Fact]
     public void RulesAreCleanedUp()
     {
         var c = Load("""{ "rules": [ { "when": "explode", "then": "goto" }, { "name": "Away", "when": "idle", "value": 99999, "then": "notify", "level": "weird" }, { "name": "Away", "when": "idle", "then": "goto" } ] }""");
@@ -198,6 +345,16 @@ public class LanTests
     [InlineData("/api/feeds/open", true)]
     [InlineData("/api/photos", true)]
     [InlineData("/api/photos/0123456789abcdef", true)]
+    [InlineData("/api/steam", true)]
+    [InlineData("/api/steam/avatar", true)]
+    [InlineData("/api/steam/other", false)]
+    [InlineData("/api/steam/library", true)]
+    [InlineData("/api/steam/cover", true)]
+    [InlineData("/api/steam/launch", true)]
+    [InlineData("/api/steam/library/x", false)]
+    [InlineData("/api/steam/games", false)]
+    [InlineData("/api/lyrics", true)]
+    [InlineData("/api/lyrics/search", false)]
     [InlineData("/api/push/temperature", true)]
     [InlineData("/api/settings", false)]
     [InlineData("/api/pair", false)]
@@ -210,6 +367,7 @@ public class LanTests
     [InlineData("/api/shortcuts/icon", true)]
     [InlineData("/api/settings/shortcut-icon", false)]
     [InlineData("/api/claude/hook", false)]
+    [InlineData("/api/codex/hook", false)]
     [InlineData("/api/obs-test", false)]
     [InlineData("/api/ha/test", false)]
     [InlineData("/api/phones", false)]
@@ -400,6 +558,10 @@ public class ConfigConcurrencyTests
     [InlineData("\"TR\"", "tr")]       // any case
     [InlineData("\" de \"", "de")]     // stray spaces
     [InlineData("\"vi\"", "vi")]       // added after the list was first written (#177)
+    [InlineData("\"pt-BR\"", "pt-BR")] // distinct from pt; casing must survive the round trip, i18n.js looks it up by exact code
+    [InlineData("\"pt-br\"", "pt-BR")] // any case still normalizes to the canonical pt-BR, not a lowercase copy
+    [InlineData("\"zh-hant\"", "zh-Hant")]
+    [InlineData("\"AR\"", "ar")]
     [InlineData("\"xx\"", "auto")]     // a language PhoneBox does not have
     [InlineData("null", "auto")]
     [InlineData("\"\"", "auto")]
@@ -428,7 +590,7 @@ public class ConfigConcurrencyTests
         using var s = AppPaths.Resource("www/i18n.js");
         Assert.NotNull(s);
         var js = new StreamReader(s!).ReadToEnd();
-        var codes = System.Text.RegularExpressions.Regex.Matches(js, @"\{\s*code:\s*'([a-z]{2,3})'").Select(m => m.Groups[1].Value).ToHashSet();
+        var codes = System.Text.RegularExpressions.Regex.Matches(js, @"\{\s*code:\s*'([A-Za-z]{2,3}(?:-[A-Za-z]{2,4})?)'").Select(m => m.Groups[1].Value).ToHashSet();
         Assert.Contains("en", codes);
         Assert.Equal(codes.Order(), DisplayConfig.Languages.Where(l => l != "auto").Order());
     }
@@ -463,6 +625,32 @@ public class Hour12ConfigTests
             var prop = doc.RootElement.GetProperty("display").GetProperty("hour12");
             Assert.Equal(expectedWrittenKind, prop.ValueKind);
             if (expectedWrittenKind == JsonValueKind.String) Assert.Equal("auto", prop.GetString());
+        }
+        finally
+        {
+            File.Delete(path);
+            File.Delete(path + ".bak");
+        }
+    }
+}
+
+public class PageBarConfigTests
+{
+    [Theory]
+    [InlineData("{}", "dots", "bottom")]
+    [InlineData("""{"display":{"pageBar":"bar","pageBarSide":"left"}}""", "bar", "left")]
+    [InlineData("""{"display":{"pageBar":"auto","pageBarSide":"right"}}""", "auto", "right")]
+    [InlineData("""{"display":{"pageBar":"sideways","pageBarSide":"top"}}""", "dots", "bottom")]
+    [InlineData("""{"display":{"pageBar":null,"pageBarSide":null}}""", "dots", "bottom")]
+    public void APageBarSettingThePanelDoesNotKnowIsSavedAsTheDefault(string inputJson, string bar, string side)
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"phonebox-pagebar-{Guid.NewGuid():N}.json");
+        try
+        {
+            File.WriteAllText(path, "{}");
+            var store = new ConfigStore(path);
+            Assert.Null(store.Save(inputJson));
+            Assert.Equal((bar, side), (store.Get().Display.PageBar, store.Get().Display.PageBarSide));
         }
         finally
         {

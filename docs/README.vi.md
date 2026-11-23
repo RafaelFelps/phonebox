@@ -10,11 +10,22 @@
   <a href="README.es.md">Español</a> ·
   <a href="README.it.md">Italiano</a> ·
   <a href="README.pt.md">Português</a> ·
+  <a href="README.pt-BR.md">Português (Brasil)</a> ·
   <a href="README.nl.md">Nederlands</a> ·
   <a href="README.pl.md">Polski</a> ·
   <a href="README.ru.md">Русский</a> ·
+  <a href="README.el.md">Ελληνικά</a> ·
   <b>Tiếng Việt</b> ·
-  <a href="README.zh.md">中文 (简体)</a>
+  <a href="README.zh.md">中文 (简体)</a> ·
+  <a href="README.ja.md">日本語</a> ·
+  <a href="README.ko.md">한국어</a> ·
+  <a href="README.id.md">Bahasa Indonesia</a> ·
+  <a href="README.th.md">ไทย</a> ·
+  <a href="README.uk.md">Українська</a> ·
+  <a href="README.hi.md">हिन्दी</a> ·
+  <a href="README.cs.md">Čeština</a> ·
+  <a href="README.ar.md">العربية</a> ·
+  <a href="README.zh-Hant.md">中文（繁體）</a>
 </p>
 
 <p align="center"><b>Biến một chiếc điện thoại Android cũ thành bảng điều khiển để bàn cho máy tính của bạn.</b><br>
@@ -38,7 +49,7 @@ Windows, Linux và macOS. Không cần root, tài khoản PhoneBox hay dịch v�
 <p align="center"><img src="hero-0.6.png" width="900" alt="PhoneBox trên ba chiếc điện thoại hiển thị các trang tự động hóa, trang chủ và lập kế hoạch"><br>
 <sub>Các bố cục ví dụ với dữ liệu demo.</sub></p>
 
-PhoneBox ghép nối một **ứng dụng Android** toàn màn hình với một **tác nhân máy tính (agent)** nhỏ gọn. Hãy xây dựng bảng điều khiển của bạn trong trình chỉnh sửa trực quan chạy trên trình duyệt: **123 widget**, **30 mẫu**, nhiều trang và xem trước trực tiếp. Kết nối nhiều điện thoại, mỗi chiếc với bố cục riêng, hoặc chuyển một chiếc điện thoại giữa các máy tính đã ghép nối.
+PhoneBox ghép nối một **ứng dụng Android** toàn màn hình với một **tác nhân máy tính (agent)** nhỏ gọn. Hãy xây dựng bảng điều khiển của bạn trong trình chỉnh sửa trực quan chạy trên trình duyệt: **124 widget**, **30 mẫu**, nhiều trang và xem trước trực tiếp. Kết nối nhiều điện thoại, mỗi chiếc với bố cục riêng, hoặc chuyển một chiếc điện thoại giữa các máy tính đã ghép nối.
 
 ## Bạn có thể làm gì
 

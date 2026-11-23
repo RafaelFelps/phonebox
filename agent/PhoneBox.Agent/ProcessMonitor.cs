@@ -95,7 +95,8 @@ public sealed partial class ProcessMonitor(ILogger<ProcessMonitor> log, SessionM
         }
     }
 
-    private void Sample()
+    /// <summary>For tests and the sampling loop. On macOS includes PID 0 (<c>kernel_task</c>); elsewhere PID 0 is skipped.</summary>
+    internal void Sample()
     {
         var now = Stopwatch.GetTimestamp();
         var elapsed = _lastTs == 0 ? 0 : (now - _lastTs) / (double)Stopwatch.Frequency;
@@ -103,7 +104,8 @@ public sealed partial class ProcessMonitor(ILogger<ProcessMonitor> log, SessionM
 
         var cpuNow = new Dictionary<int, TimeSpan>();
         var pidCpu = new Dictionary<int, double>();
-        var acc = new Dictionary<string, (int Count, double Cpu, long Mem, bool Locked, int Pid, double Gpu)>(StringComparer.OrdinalIgnoreCase);
+        // Pid is nullable: on macOS kernel_task is PID 0, so 0 cannot mean "unset".
+        var acc = new Dictionary<string, (int Count, double Cpu, long Mem, bool Locked, int? Pid, double Gpu)>(StringComparer.OrdinalIgnoreCase);
         Dictionary<int, double> pidGpu = [];
 #if WINDOWS
         try { pidGpu = (_gpu ??= new WindowsGpu.ProcessGpu()).Read(); } catch (Exception ex) { log.LogDebug("process GPU: {Msg}", ex.Message); }
@@ -115,8 +117,15 @@ public sealed partial class ProcessMonitor(ILogger<ProcessMonitor> log, SessionM
             {
                 try
                 {
+                    // Windows Idle / Unix schedulers use PID 0 with a real name; only macOS needs PID 0 listed (kernel_task).
+                    if (p.Id == 0 && !OperatingSystem.IsMacOS()) continue;
+#if !WINDOWS
+                    var name = MacDisplayName(p);
+#else
                     var name = p.ProcessName;
-                    if (p.Id == 0) continue;
+#endif
+                    if (string.IsNullOrEmpty(name)) continue;
+
                     double cpu = 0;
                     try
                     {
@@ -128,12 +137,17 @@ public sealed partial class ProcessMonitor(ILogger<ProcessMonitor> log, SessionM
                     catch { /* protected process: CPU time is not readable */ }
                     pidCpu[p.Id] = cpu;
 
+#if !WINDOWS
+                    var mem = MacMemoryBytes(p);
+#else
                     long mem = 0;
                     try { mem = p.WorkingSet64; } catch { }
+#endif
 
-                    var locked = Protected.Contains(name) || !Mine(p);
+                    // PID 0 (macOS kernel_task) and Protected names stay listed but cannot be ended from the phone.
+                    var locked = p.Id == 0 || p.Id == _selfPid || Protected.Contains(name) || !Mine(p);
                     acc.TryGetValue(name, out var a);
-                    acc[name] = (a.Count + 1, a.Cpu + cpu, a.Mem + mem, a.Locked || locked, a.Pid == 0 ? p.Id : a.Pid,
+                    acc[name] = (a.Count + 1, a.Cpu + cpu, a.Mem + mem, a.Locked || locked, a.Pid ?? p.Id,
                         a.Gpu + pidGpu.GetValueOrDefault(p.Id));
                 }
                 catch { }
@@ -145,7 +159,11 @@ public sealed partial class ProcessMonitor(ILogger<ProcessMonitor> log, SessionM
         _groups = acc
             .Select(kv =>
             {
-                var meta = _meta.GetOrAdd(kv.Key, _ => ReadMeta(kv.Value.Pid, kv.Key));
+                if (!_meta.TryGetValue(kv.Key, out var meta) || meta.Path is null)
+                {
+                    meta = ReadMeta(kv.Value.Pid ?? 0, kv.Key);
+                    if (meta.Path is not null) _meta[kv.Key] = meta;
+                }
                 return new ProcGroup(kv.Key, meta.Title, kv.Value.Count, Math.Round(kv.Value.Cpu, 1),
                     Math.Round(kv.Value.Mem / 1048576.0), kv.Value.Locked, meta.Path is not null, Math.Round(Math.Min(100, kv.Value.Gpu), 1));
             })
@@ -176,34 +194,101 @@ public sealed partial class ProcessMonitor(ILogger<ProcessMonitor> log, SessionM
     [System.Text.RegularExpressions.GeneratedRegex(@"^pid_(\d+)_(luid_0x[0-9a-f]+_0x[0-9a-f]+_phys_\d+_eng_\d+)", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
     private static partial System.Text.RegularExpressions.Regex GpuInstance();
 
+    /// <summary>
+    /// Instances of <paramref name="name"/>. On macOS, <see cref="Process.GetProcessesByName"/>
+    /// skips processes whose <see cref="Process.ProcessName"/> is empty (including PID 0 /
+    /// <c>kernel_task</c>); those are matched with the same recovery as <see cref="Sample"/>.
+    /// </summary>
+    private static IEnumerable<Process> ProcessesNamed(string name)
+    {
+        var seen = new HashSet<int>();
+        foreach (var p in Process.GetProcessesByName(name))
+        {
+            seen.Add(p.Id);
+            yield return p;
+        }
+#if !WINDOWS
+        if (!OperatingSystem.IsMacOS()) yield break;
+        foreach (var p in Process.GetProcesses())
+        {
+            if (!seen.Add(p.Id)) { p.Dispose(); continue; }
+            string? recovered = null;
+            try { recovered = MacDisplayName(p); }
+            catch { p.Dispose(); continue; }
+            if (recovered is not null && recovered.Equals(name, StringComparison.OrdinalIgnoreCase))
+                yield return p;
+            else
+                p.Dispose();
+        }
+#endif
+    }
+
+#if !WINDOWS
+    /// <summary>
+    /// macOS display name: <see cref="Process.ProcessName"/>, else <c>ps</c> comm, else
+    /// <c>kernel_task</c> for PID 0.
+    /// </summary>
+    private static string? MacDisplayName(Process p)
+    {
+        var name = p.ProcessName;
+        if (!OperatingSystem.IsMacOS()) return string.IsNullOrEmpty(name) ? null : name;
+        if (string.IsNullOrEmpty(name)) name = UnixProc.Comm(p.Id) ?? "";
+        if (p.Id == 0 && string.IsNullOrEmpty(name)) name = "kernel_task";
+        return string.IsNullOrEmpty(name) ? null : name;
+    }
+
+    /// <summary>Working set, or on macOS ps RSS / kernel wired when WorkingSet64 is 0.</summary>
+    private static long MacMemoryBytes(Process p)
+    {
+        long mem = 0;
+        try { mem = p.WorkingSet64; } catch { }
+        if (mem > 0 || !OperatingSystem.IsMacOS()) return mem;
+        var rss = UnixProc.RssBytes(p.Id);
+        if (rss > 0) return rss;
+        return p.Id == 0 ? UnixProc.KernelWiredBytes() : 0;
+    }
+#endif
+
     /// <summary>Every instance of a process name, with what identifies each one.</summary>
     public ProcDetail Detail(string name)
     {
         Touch();
-        var claudeByPid = sessions.Snapshot().Where(s => s.Pid is not null).ToDictionary(s => s.Pid!.Value, s => s.Name);
+        var claudeByPid = sessions.Snapshot().Where(s => s.Pid is not null)
+            .GroupBy(s => s.Pid!.Value)
+            .ToDictionary(g => g.Key, g => g.OrderByDescending(s => s.Since).First().Name);
         var cpu = _pidCpu;
         var list = new List<ProcInstance>();
-        foreach (var p in Process.GetProcessesByName(name))
+        foreach (var p in ProcessesNamed(name))
         {
             using (p)
             {
                 try
                 {
                     long mem = 0;
+#if !WINDOWS
+                    mem = MacMemoryBytes(p);
+#else
                     try { mem = p.WorkingSet64; } catch { }
+#endif
                     long? started = null;
                     try { started = new DateTimeOffset(p.StartTime).ToUnixTimeMilliseconds(); } catch { }
                     string? window = null;
                     try { window = string.IsNullOrWhiteSpace(p.MainWindowTitle) ? null : p.MainWindowTitle; } catch { }
-                    var locked = Protected.Contains(name) || !Mine(p);
+                    var locked = p.Id == 0 || p.Id == _selfPid || Protected.Contains(name) || !Mine(p);
                     list.Add(new ProcInstance(p.Id, Math.Round(cpu.GetValueOrDefault(p.Id), 1), Math.Round(mem / 1048576.0),
                         started, claudeByPid.GetValueOrDefault(p.Id), window, _args.GetOrAdd(p.Id, ReadArgs), locked));
                 }
                 catch { }
             }
         }
-        var meta = _meta.TryGetValue(name, out var m) ? m : (name, null);
-        return new ProcDetail(name, meta.Title, Protected.Contains(name),
+        if ((!_meta.TryGetValue(name, out var meta) || meta.Path is null) && list.Count > 0)
+        {
+            meta = ReadMeta(list[0].Pid, name);
+            if (meta.Path is not null) _meta[name] = meta;
+        }
+        else if (!_meta.TryGetValue(name, out meta)) meta = (name, null);
+        var groupLocked = Protected.Contains(name) || (list.Count > 0 && list.All(i => i.Locked));
+        return new ProcDetail(name, meta.Title, groupLocked,
             list.OrderByDescending(i => i.Cpu).ThenByDescending(i => i.MemMb).ToList());
     }
 
@@ -214,11 +299,18 @@ public sealed partial class ProcessMonitor(ILogger<ProcessMonitor> log, SessionM
         if (Protected.Contains(name)) return new(0, 0, $"{name} is protected and cannot be terminated");
 
         int killed = 0, failed = 0;
-        foreach (var p in Process.GetProcessesByName(name))
+        // Same recovered-name match as the process list / Detail, so every listed instance is considered.
+        foreach (var p in ProcessesNamed(name))
         {
             using (p)
             {
-                if (!Mine(p)) { failed++; continue; }
+#if !WINDOWS
+                var resolved = MacDisplayName(p) ?? "";
+#else
+                var resolved = p.ProcessName;
+#endif
+                // Check the resolved process name (not the request spelling) so case variants cannot bypass Protected.
+                if (p.Id == 0 || p.Id == _selfPid || Protected.Contains(resolved) || !Mine(p)) { failed++; continue; }
                 try { p.Kill(); killed++; }
                 catch { failed++; }
             }
@@ -235,13 +327,18 @@ public sealed partial class ProcessMonitor(ILogger<ProcessMonitor> log, SessionM
     /// </summary>
     public KillResult KillPid(int pid)
     {
+        if (pid == 0) return new(0, 0, "PID 0 is protected and cannot be terminated");
         if (pid == _selfPid) return new(0, 0, "that is the PhoneBox agent itself");
         Process p;
         try { p = Process.GetProcessById(pid); }
         catch { return new(0, 0, "process not found"); }
         using (p)
         {
+#if !WINDOWS
+            var name = MacDisplayName(p) ?? "";
+#else
             var name = p.ProcessName;
+#endif
             if (Protected.Contains(name)) return new(0, 0, $"{name} is protected and cannot be terminated");
             if (!Mine(p)) return new(0, 0, "process belongs to another session or user");
             var descendants = Descendants(pid);
@@ -253,7 +350,12 @@ public sealed partial class ProcessMonitor(ILogger<ProcessMonitor> log, SessionM
                 try
                 {
                     using var c = Process.GetProcessById(d);
-                    if (d == _selfPid || Protected.Contains(c.ProcessName) || !Mine(c)) { skipped++; continue; }
+#if !WINDOWS
+                    var childName = MacDisplayName(c) ?? "";
+#else
+                    var childName = c.ProcessName;
+#endif
+                    if (d == _selfPid || Protected.Contains(childName) || !Mine(c)) { skipped++; continue; }
                     c.Kill();
                     killed++;
                 }
@@ -305,24 +407,46 @@ public sealed partial class ProcessMonitor(ILogger<ProcessMonitor> log, SessionM
 #endif
     }
 
-    public byte[]? Icon(string name) => _icons.GetOrAdd(name, n =>
+    public byte[]? Icon(string name)
     {
-#if !WINDOWS
-        return UnixProc.Icon(n, _meta.TryGetValue(n, out var um) ? um.Path : null);
-#else
-        if (!_meta.TryGetValue(n, out var meta) || meta.Path is null) return null;
-        try
+        if (_icons.TryGetValue(name, out var cached) && cached is not null) return cached;
+        if (!_meta.TryGetValue(name, out var meta) || meta.Path is null)
         {
-            using var ico = System.Drawing.Icon.ExtractAssociatedIcon(meta.Path);
-            if (ico is null) return null;
-            using var bmp = ico.ToBitmap();
-            using var ms = new MemoryStream();
-            bmp.Save(ms, ImageFormat.Png);
-            return ms.ToArray();
+            foreach (var p in Process.GetProcessesByName(name))
+            {
+                using (p)
+                {
+                    if (meta.Path is null)
+                    {
+                        try { meta = ReadMeta(p.Id, name); } catch { }
+                        if (meta.Path is not null) _meta[name] = meta;
+                    }
+                }
+            }
         }
-        catch { return null; }
+        byte[]? png = null;
+#if !WINDOWS
+        png = UnixProc.Icon(name, meta.Path);
+#else
+        if (meta.Path is not null)
+        {
+            try
+            {
+                using var ico = System.Drawing.Icon.ExtractAssociatedIcon(meta.Path);
+                if (ico is not null)
+                {
+                    using var bmp = ico.ToBitmap();
+                    using var ms = new MemoryStream();
+                    bmp.Save(ms, ImageFormat.Png);
+                    png = ms.ToArray();
+                }
+            }
+            catch { }
+        }
 #endif
-    });
+        if (png is not null) _icons[name] = png;
+        return png;
+    }
 
     private static (string Title, string? Path) ReadMeta(int pid, string name)
     {
@@ -344,6 +468,18 @@ public sealed partial class ProcessMonitor(ILogger<ProcessMonitor> log, SessionM
         }
         return (title, path);
 #endif
+    }
+
+    internal static string? ShortenArgs(string? cmd)
+    {
+        if (string.IsNullOrWhiteSpace(cmd)) return null;
+        cmd = cmd.Trim();
+        // drop the executable (quoted or not)
+        var rest = cmd.StartsWith('"') ? cmd[(cmd.IndexOf('"', 1) is var q && q > 0 ? q + 1 : cmd.Length)..]
+                                      : cmd[(cmd.IndexOfAny([' ', '\t']) is var s && s > 0 ? s : cmd.Length)..];
+        rest = rest.Trim();
+        if (rest.Length == 0) return null;
+        return rest.Length > 140 ? rest[..137] + "…" : rest;
     }
 
 #if WINDOWS
@@ -384,7 +520,7 @@ public sealed partial class ProcessMonitor(ILogger<ProcessMonitor> log, SessionM
             try
             {
                 if (NtQueryInformationProcess(h, 60, buf, len, out _) != 0) return null;
-                var chars = Marshal.ReadInt16(buf) / 2; // UNICODE_STRING.Length is in bytes
+                var chars = (ushort)Marshal.ReadInt16(buf) / 2; // UNICODE_STRING.Length is an unsigned USHORT in bytes
                 var cmd = Marshal.PtrToStringUni(Marshal.ReadIntPtr(buf, IntPtr.Size), chars);
                 return ShortenArgs(cmd);
             }
@@ -392,18 +528,6 @@ public sealed partial class ProcessMonitor(ILogger<ProcessMonitor> log, SessionM
         }
         catch { return null; }
         finally { CloseHandle(h); }
-    }
-
-    private static string? ShortenArgs(string? cmd)
-    {
-        if (string.IsNullOrWhiteSpace(cmd)) return null;
-        cmd = cmd.Trim();
-        // drop the executable (quoted or not)
-        var rest = cmd.StartsWith('"') ? cmd[(cmd.IndexOf('"', 1) is var q && q > 0 ? q + 1 : cmd.Length)..]
-                                      : cmd[(cmd.IndexOf(' ') is var s && s > 0 ? s : cmd.Length)..];
-        rest = rest.Trim();
-        if (rest.Length == 0) return null;
-        return rest.Length > 140 ? rest[..137] + "…" : rest;
     }
 
     [DllImport("kernel32.dll", SetLastError = true)]

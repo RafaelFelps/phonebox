@@ -17,32 +17,41 @@ public static class ClaudeHook
 
     /// <summary>Handles one hook call; returns the JSON for the hook to print, or null for "no decision".</summary>
     public static async Task<object?> HandleAsync(JsonElement input, ConfigStore cfg, ApprovalStore approvals, SessionMonitor sessions, CancellationToken aborted)
+        => await HandlePermissionAsync(input, cfg, approvals, sessions, aborted, "Claude Code", "claude:", allowQuestions: true);
+
+    /// <summary>Shared PermissionRequest protocol used by Claude Code, Codex and compatible agents.</summary>
+    internal static async Task<object?> HandlePermissionAsync(JsonElement input, ConfigStore cfg, ApprovalStore approvals,
+        SessionMonitor sessions, CancellationToken aborted, string source, string? sessionPrefix, bool allowQuestions)
     {
+        if (input.ValueKind != JsonValueKind.Object) return null;
         var c = cfg.Get().Claude;
         if (!c.PhoneApprovals) return null;
         if (c.OnlyWhenAway && Idle.Seconds() < 60) return null;
 
         var tool = Str(input, "tool_name") ?? "a tool";
         var ti = input.TryGetProperty("tool_input", out var t) && t.ValueKind == JsonValueKind.Object ? t : default;
-        var cwd = Str(input, "cwd") ?? "";
+        var cwd = (Str(input, "cwd") ?? "").Trim();
         var sessionId = Str(input, "session_id") ?? "";
-        var session = sessions.Snapshot().FirstOrDefault(s => s.Id == "claude:" + sessionId);
+        var session = sessionPrefix is null ? null : sessions.Snapshot().FirstOrDefault(s => s.Id == sessionPrefix + sessionId);
         var project = session?.Name ?? ProjectName(cwd);
         var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         // AskUserQuestion is a question, not a permission: Allow would only open the same question in the terminal.
-        var question = tool == "AskUserQuestion";
-        var a = new Approval(ApprovalStore.NewId(), "Claude Code", sessionId, project, ToolTitle(tool), question ? QuestionDetail(ti) : Detail(tool, ti),
+        var question = allowQuestions && tool == "AskUserQuestion";
+        var shownCwd = cwd.Length <= 1000 ? cwd : "…" + cwd[^999..];
+        var a = new Approval(ApprovalStore.NewId(), source, sessionId, project, shownCwd, ToolTitle(tool), question ? QuestionDetail(ti) : Detail(tool, ti),
             ti.ValueKind == JsonValueKind.Object ? Str(ti, "description") : null, now, now + Math.Clamp(c.TimeoutSec, 10, 3600) * 1000L,
             question ? "question" : "permission");
 
         var decision = await approvals.AskAsync(a, aborted);
-        if (decision is null or "skip") return null; // no decision: Claude Code asks in the terminal as usual
+        // "skip" and an OpenCode-style typed answer ("answer") have no Claude Code equivalent: no decision here
+        if (decision is not ("allow" or "always" or "deny")) return null;
         return new
         {
             hookSpecificOutput = new
             {
                 hookEventName = "PermissionRequest",
-                decision = decision == "allow"
+                // "always" (Allow always, an OpenCode answer) has no Claude Code equivalent and allows once like "allow"
+                decision = decision is "allow" or "always"
                     ? (object)new { behavior = "allow" }
                     : new { behavior = "deny", message = "Denied from the PhoneBox panel." },
             },
@@ -82,7 +91,7 @@ public static class ClaudeHook
             "WebSearch" => Str(ti, "query"),
             _ => null,
         };
-        if (tool is "Edit" && Str(ti, "new_string") is { } ns) s += "\n\n" + Head(ns, 12);
+        if (tool is "Edit" && s is not null && Str(ti, "new_string") is { } ns) s += "\n\n" + Head(ns, 12);
         s ??= JsonSerializer.Serialize(ti, new JsonSerializerOptions { WriteIndented = true });
         return s.Length > 3000 ? s[..3000] + "…" : s;
     }
@@ -94,6 +103,7 @@ public static class ClaudeHook
         if (ti.ValueKind == JsonValueKind.Object && ti.TryGetProperty("questions", out var qs) && qs.ValueKind == JsonValueKind.Array)
             foreach (var q in qs.EnumerateArray())
             {
+                if (q.ValueKind != JsonValueKind.Object) continue;
                 if (sb.Length > 0) sb.Append("\n\n");
                 var header = Str(q, "header");
                 sb.Append(header is { Length: > 0 } ? header + ": " : "").Append(Str(q, "question") ?? "");
@@ -101,8 +111,9 @@ public static class ClaudeHook
                 if (q.TryGetProperty("options", out var os) && os.ValueKind == JsonValueKind.Array)
                     foreach (var o in os.EnumerateArray())
                     {
+                        if (o.ValueKind != JsonValueKind.Object || Str(o, "label") is not { Length: > 0 } label) continue;
                         var d = Str(o, "description");
-                        sb.Append("\n  • ").Append(Str(o, "label") ?? "").Append(d is { Length: > 0 } ? " — " + d : "");
+                        sb.Append("\n  • ").Append(label).Append(d is { Length: > 0 } ? " — " + d : "");
                     }
             }
         var s = sb.ToString();
@@ -121,43 +132,87 @@ public static class ClaudeHook
 
     // ---------------------------------------------------------------- install / remove the hook in ~/.claude/settings.json
 
-    private static string HookCommand(int port) =>
-        $"{(OperatingSystem.IsWindows() ? "curl.exe" : "curl")} -s --max-time 3600 -X POST http://127.0.0.1:{port}{Endpoint} -H \"Content-Type: application/json\" --data-binary \"@-\"";
+    // --noproxy: a proxy in the user's curl settings (or *_proxy variables) must never receive the request, which
+    // carries the command and paths the agent asks about
+    private static string HookCommand(int port, string endpoint) =>
+        $"{(OperatingSystem.IsWindows() ? "curl.exe" : "curl")} -s --noproxy 127.0.0.1 --max-time 3600 -X POST http://127.0.0.1:{port}{endpoint} -H \"Content-Type: application/json\" --data-binary \"@-\"";
 
-    private static bool IsOurs(JsonNode? hook) => hook?["command"]?.GetValue<string>()?.Contains(Endpoint) == true;
+    private static bool IsOurs(JsonNode? hook, string endpoint)
+    {
+        if (hook is not JsonObject obj || obj["command"] is not JsonValue v || !v.TryGetValue<string>(out var cmd))
+            return false;
+        const string hostPrefix = "127.0.0.1:";
+        for (var pos = 0; (pos = cmd.IndexOf(hostPrefix, pos, StringComparison.Ordinal)) >= 0; pos += hostPrefix.Length)
+        {
+            var i = pos + hostPrefix.Length;
+            var digitsStart = i;
+            while (i < cmd.Length && char.IsAsciiDigit(cmd[i])) i++;
+            // the endpoint must end there: /api/hooks/codex/permission-audit is someone else's hook
+            if (i > digitsStart && cmd.AsSpan(i).StartsWith(endpoint.AsSpan(), StringComparison.Ordinal)
+                && (i + endpoint.Length == cmd.Length || !IsPathChar(cmd[i + endpoint.Length])))
+                return true;
+        }
+        return false;
+    }
 
-    public static bool Installed()
+    private static bool IsPathChar(char c) => char.IsAsciiLetterOrDigit(c) || c is '-' or '_' or '.' or '/' or '~' or '%';
+
+    public static bool Installed() => Installed(SettingsPath);
+
+    internal static bool Installed(string path)
+        => Installed(path, Endpoint);
+
+    internal static bool Installed(string path, string endpoint)
     {
         try
         {
-            var root = JsonNode.Parse(File.ReadAllText(SettingsPath), documentOptions: new JsonDocumentOptions { CommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true });
-            return root?["hooks"]?["PermissionRequest"]?.AsArray().Any(g => g?["hooks"]?.AsArray().Any(IsOurs) == true) == true;
+            var root = JsonNode.Parse(File.ReadAllText(path), documentOptions: new JsonDocumentOptions { CommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true });
+            return root is JsonObject obj
+                && obj["hooks"] is JsonObject hooks
+                && hooks["PermissionRequest"] is JsonArray groups
+                && groups.Any(g => g is JsonObject go && go["hooks"] is JsonArray hs && hs.Any(h => IsOurs(h, endpoint)));
         }
         catch { return false; }
     }
 
     /// <summary>Adds (or, with install = false, removes) the PhoneBox hook, keeping everything else and a backup.</summary>
-    public static string? Configure(bool install, int port, int timeoutSec)
+    public static string? Configure(bool install, int port, int timeoutSec) =>
+        Configure(install, port, timeoutSec, SettingsPath);
+
+    internal static string? Configure(bool install, int port, int timeoutSec, string path)
+        => Configure(install, port, timeoutSec, path, Endpoint);
+
+    internal static string? Configure(bool install, int port, int timeoutSec, string path, string endpoint)
     {
         try
         {
             JsonObject root;
-            if (File.Exists(SettingsPath))
+            if (File.Exists(path))
             {
-                var text = File.ReadAllText(SettingsPath);
-                root = JsonNode.Parse(text, documentOptions: new JsonDocumentOptions { CommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true }) as JsonObject
-                       ?? throw new InvalidDataException("settings.json is not a JSON object");
-                File.WriteAllText(SettingsPath + ".phonebox.bak", text);
+                var text = File.ReadAllText(path);
+                if (string.IsNullOrWhiteSpace(text)) root = new JsonObject();
+                else
+                {
+                    root = JsonNode.Parse(text, documentOptions: new JsonDocumentOptions { CommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true }) as JsonObject
+                           ?? throw new InvalidDataException("settings.json is not a JSON object");
+                    // owner-only like the replacement below: the file can hold API keys (its "env" section)
+                    AppPaths.WriteAllTextPrivate(path + ".phonebox.bak", text);
+                }
             }
             else root = new JsonObject();
 
+            // a value of another shape is the user's to fix: replacing or dropping it would lose what they wrote
+            if (root["hooks"] is { } hooksNode && hooksNode is not JsonObject)
+                throw new InvalidDataException("\"hooks\" in settings.json is not a JSON object");
             var hooks = root["hooks"] as JsonObject ?? new JsonObject();
+            if (hooks["PermissionRequest"] is { } groupsNode && groupsNode is not JsonArray)
+                throw new InvalidDataException("\"hooks.PermissionRequest\" in settings.json is not a list");
             var groups = hooks["PermissionRequest"] as JsonArray ?? new JsonArray();
             // drop our old entries (and groups that become empty)
             foreach (var g in groups.ToList())
             {
-                if (g?["hooks"] is not JsonArray hs) continue;
-                foreach (var h in hs.Where(IsOurs).ToList()) hs.Remove(h);
+                if (g is not JsonObject go || go["hooks"] is not JsonArray hs) continue;
+                foreach (var h in hs.Where(h => IsOurs(h, endpoint)).ToList()) hs.Remove(h);
                 if (hs.Count == 0) groups.Remove(g);
             }
             if (install)
@@ -167,17 +222,26 @@ public static class ClaudeHook
                     ["hooks"] = new JsonArray(new JsonObject
                     {
                         ["type"] = "command",
-                        ["command"] = HookCommand(port),
+                        ["command"] = HookCommand(port, endpoint),
                         ["timeout"] = Math.Clamp(timeoutSec, 10, 3600) + 15,
                     }),
                 });
-            if (groups.Count > 0) hooks["PermissionRequest"] = groups; else hooks.Remove("PermissionRequest");
-            if (hooks.Count > 0) root["hooks"] = hooks; else root.Remove("hooks");
+            if (groups.Count > 0)
+            {
+                if (!ReferenceEquals(hooks["PermissionRequest"], groups)) hooks["PermissionRequest"] = groups;
+            }
+            else hooks.Remove("PermissionRequest");
+            if (hooks.Count > 0)
+            {
+                if (!ReferenceEquals(root["hooks"], hooks)) root["hooks"] = hooks;
+            }
+            else root.Remove("hooks");
 
-            Directory.CreateDirectory(Path.GetDirectoryName(SettingsPath)!);
-            var tmp = SettingsPath + ".tmp";
-            File.WriteAllText(tmp, root.ToJsonString(new JsonSerializerOptions { WriteIndented = true, Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping }));
-            File.Move(tmp, SettingsPath, overwrite: true);
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            var tmp = path + ".tmp";
+            // created owner-only: moving a 0644 file over the original would widen a private settings file
+            AppPaths.WriteAllTextPrivate(tmp, root.ToJsonString(new JsonSerializerOptions { WriteIndented = true, Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping }));
+            File.Move(tmp, path, overwrite: true);
             return null;
         }
         catch (Exception ex) { return ex.Message; }

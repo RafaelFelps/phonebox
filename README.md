@@ -10,11 +10,22 @@
   <a href="docs/README.es.md">Español</a> ·
   <a href="docs/README.it.md">Italiano</a> ·
   <a href="docs/README.pt.md">Português</a> ·
+  <a href="docs/README.pt-BR.md">Português (Brasil)</a> ·
   <a href="docs/README.nl.md">Nederlands</a> ·
   <a href="docs/README.pl.md">Polski</a> ·
   <a href="docs/README.ru.md">Русский</a> ·
+  <a href="docs/README.el.md">Ελληνικά</a> ·
   <a href="docs/README.vi.md">Tiếng Việt</a> ·
-  <a href="docs/README.zh.md">中文 (简体)</a>
+  <a href="docs/README.zh.md">中文 (简体)</a> ·
+  <a href="docs/README.ja.md">日本語</a> ·
+  <a href="docs/README.ko.md">한국어</a> ·
+  <a href="docs/README.id.md">Bahasa Indonesia</a> ·
+  <a href="docs/README.th.md">ไทย</a> ·
+  <a href="docs/README.uk.md">Українська</a> ·
+  <a href="docs/README.hi.md">हिन्दी</a> ·
+  <a href="docs/README.cs.md">Čeština</a> ·
+  <a href="docs/README.ar.md">العربية</a> ·
+  <a href="docs/README.zh-Hant.md">中文（繁體）</a>
 </p>
 
 <p align="center"><b>Turn an old Android phone into a desk panel for your computer.</b><br>
@@ -39,7 +50,7 @@ Windows, Linux and macOS. No root, PhoneBox account or cloud service required.</
 <sub>Example layouts with demo data.</sub></p>
 
 PhoneBox pairs a full-screen **Android app** with a small **desktop agent**. Build your panel in a browser-based
-visual editor: **123 widgets**, **30 templates**, multiple pages and a live preview. Connect several phones with
+visual editor: **131 widgets**, **30 templates**, multiple pages and a live preview. Connect several phones with
 their own layouts, or switch one phone between paired computers.
 
 ## What you can do
@@ -47,14 +58,14 @@ their own layouts, or switch one phone between paired computers.
 | Use it for | What appears on the phone |
 |---|---|
 | **PC monitoring** | CPU, GPU, RAM, disks, network and ping; charts, GPU details and process controls |
-| **AI coding** | Claude, Codex and Antigravity quotas, reset times and burn-rate forecasts; local Claude Code and Codex sessions; GitHub reviews and CI status |
+| **AI coding** | Claude, Codex and Antigravity quotas, reset times and burn-rate forecasts; local Claude Code, Codex and OpenCode sessions (native and inside WSL); GitHub reviews and CI status |
 | **Touch controls** | App and URL shortcuts, key combinations and macros; application audio, microphone, media, OBS and system controls through [Control Deck](docs/CONTROL-DECK.md) |
 | **Everyday use** | Now Playing, internet radio, clocks, weather, calendars, notes, checklists, pomodoro and timers |
 | **Automation** | Webhook values and notifications, Home Assistant controls and rules that react to activity on the computer |
 
-Tap an AI session for its model, timing and token details. Opt in to Claude Code permission prompts to answer
-**Allow** or **Deny** from the phone. Optional [CodexBar integration](docs/GUIDE.md#widgets) adds quota providers
-and a cost overview.
+Tap an AI session for its model, timing and token details. Opt in to Codex, Claude Code or OpenCode permission prompts
+to answer **Allow**, **Deny** (and **Always allow** for OpenCode) from the phone. Optional
+[CodexBar integration](docs/GUIDE.md#widgets) adds quota providers and a cost overview.
 
 <p align="center"><a href="docs/tour-0.6.mp4"><img src="docs/tour-0.6.gif" width="780" alt="PhoneBox tour showing notifications, a Claude Code permission prompt and automatic page switching"></a><br>
 <sub>A tour with demo data: notifications, permission prompts and automatic page switching. <a href="docs/tour-0.6.mp4">Watch the MP4</a></sub></p>
@@ -82,7 +93,7 @@ Setup downloads the latest release, checks its SHA-256 checksum, offers missing 
 and opens the settings at <http://127.0.0.1:8765>. It can also install the Android app over USB.
 Run setup again to update or repair the installation while keeping settings and pairings.
 
-> **Windows signing:** release agents are currently unsigned while the SignPath Foundation application is pending.
+> **Windows signing:** release agents are still unsigned: SignPath Foundation accepted PhoneBox and test signing works, and releases are signed once its release certificate is issued.
 > SmartScreen or antivirus software may warn or block them. See the [code signing policy](#code-signing-policy)
 > and [installation warnings](docs/SETUP.md#quick-start). USB debugging should be authorized only on computers you trust.
 
@@ -93,8 +104,11 @@ The [installation guide](docs/SETUP.md) covers options, dependencies, install pa
 
 | USB | Wi-Fi only |
 |---|---|
-| Enable **Developer options → USB debugging**, connect a data cable and accept the phone's authorization prompt. Let setup install the app, or use **Settings → General → Install the phone app**. | Install the APK from the [latest release](https://github.com/ersinkoc/phonebox/releases/latest). Enable **Settings → General → Wi-Fi & Tailscale**, restart the agent when asked, then choose **Pair a phone over Wi-Fi**. Scan the pairing QR code and confirm the matching check code. |
+| Enable **Developer options → USB debugging**, connect a data cable and accept the phone's authorization prompt. Let setup install the app, or use **Settings → General → Install the phone app**. | Install the APK from the [latest release](https://github.com/ersinkoc/phonebox/releases/latest). Wi-Fi is off by default: open the settings page (tray icon, or `http://127.0.0.1:8765`), turn on **General → Wi-Fi & Tailscale → Let the phone connect without the USB cable**, click **Save**, then **Restart to apply** at the top. Choose **Pair a phone over Wi-Fi**, scan the pairing QR code and confirm the matching check code. |
 | Wakes and opens the panel on connection; supports app updates over adb. | No adb or developer options needed; install app updates manually unless you later configure USB. |
+
+The phone app is not in any app store; it comes only from this repository's releases. It runs on Android 5.0 and
+newer; there is no iOS version.
 
 For automatic USB/Wi-Fi fallback, enable Wi-Fi and connect the phone over USB once.
 [Connection details and Tailscale setup →](docs/SETUP.md#wi-fi--tailscale)
@@ -166,9 +180,21 @@ release builds. See the [full compatibility table](docs/SETUP.md#what-works-wher
 
 The [UMIDIGI BISON extras](extras/umidigi-bison) contain the reversible, no-root tune-up used on the original development phone.
 
+## Community add-ons
+
+Add-ons are written and maintained by their authors. PhoneBox doesn't review or ship them. They run with your own
+rights on the computer and can change PhoneBox settings through `PUT /api/settings`, so read what an add-on does
+before you install it.
+
+| Add-on | What it does | What it sends outside the PC |
+|---|---|---|
+| [PhoneBox Games Tab](https://github.com/lucasaz/phonebox-games-tab) (Windows) | A Games page with live FPS, cover art and play time, through the push API and a Custom HTML widget | Store / Xbox apps' package names, with the Windows display language and region, to the Microsoft Store catalog (`displaycatalog.mp.microsoft.com`); the phone loads cover images from Microsoft's image servers and from Steam's, whose URL contains the game's Steam app ID |
+| [PhoneBox for GNOME](https://github.com/Gabrielmororo180/phonebox-gnome) (Linux, GNOME) | CPU and the Claude session quota in the GNOME top bar; a click opens the panel, with page tabs, right below it. Also works as a desktop widget | Nothing of its own; the panel it opens makes the same requests as on the phone, such as the weather from `api.open-meteo.com` (see [PRIVACY.md](PRIVACY.md)) |
+
 ## Security & privacy
 
-The desktop settings server listens on `127.0.0.1:8765`; USB reaches it through `adb reverse`.
+The desktop settings server listens on `127.0.0.1:8765`. USB reaches the agent through `adb reverse` on a loopback
+port of its own, over TLS pinned like Wi-Fi, with a key the phone app makes and the agent reads over adb.
 Optional Wi-Fi uses HTTPS on port 8766 with a pinned certificate and a paired key. Settings and pairing endpoints
 stay local. The phone requests configured actions by ID; commands and integration credentials stay on the computer.
 
@@ -198,7 +224,8 @@ Contributions are welcome; start with [CONTRIBUTING.md](CONTRIBUTING.md).
 Free code signing provided by [SignPath.io](https://about.signpath.io/), certificate by
 [SignPath Foundation](https://signpath.org/).
 
-- **Windows agent:** the SignPath Foundation application is pending; releases are unsigned until approved.
+- **Windows agent:** SignPath Foundation accepted the project and a test-signed build passed; releases stay unsigned
+  until the Foundation's release certificate is issued.
   The intended signing target is `PhoneBoxAgent.exe` in the `win-x64` release zip, built by the
   [release workflow](.github/workflows/release.yml). Every signing request requires manual approval.
   Bundled runtime and library notices are in [THIRD-PARTY-NOTICES.txt](agent/PhoneBox.Agent/THIRD-PARTY-NOTICES.txt).

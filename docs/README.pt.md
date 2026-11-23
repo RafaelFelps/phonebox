@@ -10,11 +10,22 @@
   <a href="README.es.md">Español</a> ·
   <a href="README.it.md">Italiano</a> ·
   <b>Português</b> ·
+  <a href="README.pt-BR.md">Português (Brasil)</a> ·
   <a href="README.nl.md">Nederlands</a> ·
   <a href="README.pl.md">Polski</a> ·
   <a href="README.ru.md">Русский</a> ·
+  <a href="README.el.md">Ελληνικά</a> ·
   <a href="README.vi.md">Tiếng Việt</a> ·
-  <a href="README.zh.md">中文 (简体)</a>
+  <a href="README.zh.md">中文 (简体)</a> ·
+  <a href="README.ja.md">日本語</a> ·
+  <a href="README.ko.md">한국어</a> ·
+  <a href="README.id.md">Bahasa Indonesia</a> ·
+  <a href="README.th.md">ไทย</a> ·
+  <a href="README.uk.md">Українська</a> ·
+  <a href="README.hi.md">हिन्दी</a> ·
+  <a href="README.cs.md">Čeština</a> ·
+  <a href="README.ar.md">العربية</a> ·
+  <a href="README.zh-Hant.md">中文（繁體）</a>
 </p>
 
 <p align="center"><b>Transforme um telemóvel Android antigo num painel de secretária para o seu computador.</b><br>
@@ -38,7 +49,7 @@ Windows, Linux e macOS. Sem root, sem conta PhoneBox e sem serviço na nuvem.</p
 <p align="center"><img src="hero-0.6.png" width="900" alt="PhoneBox em três telemóveis"><br>
 <sub>Esquemas de exemplo com dados de demonstração.</sub></p>
 
-O PhoneBox combina uma **aplicação Android** em ecrã inteiro com um pequeno **agente de ambiente de trabalho**. Crie o seu painel no editor visual no navegador: **123 widgets**, **30 modelos**, várias páginas e pré-visualização ao vivo.
+O PhoneBox combina uma **aplicação Android** em ecrã inteiro com um pequeno **agente de ambiente de trabalho**. Crie o seu painel no editor visual no navegador: **124 widgets**, **30 modelos**, várias páginas e pré-visualização ao vivo.
 
 ## O que pode fazer
 

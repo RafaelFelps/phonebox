@@ -38,6 +38,37 @@ public sealed class ClaudeQuotaScheduleTests : IDisposable
     private static QuotaProvider Claude(QuotaMonitor agent) => Assert.Single(agent.Snapshot(), p => p.Id == "claude");
 
     [Fact]
+    public async Task AnExpiredTokenIsRenewedThroughClaudeCodeAtMostEveryFifteenMinutes()
+    {
+        SignIn("token-1", _t0 - Minute);
+        _api.Respond(HttpStatusCode.OK, Usage);
+        var runs = 0;
+        var renewed = new TaskCompletionSource();
+        var agent = new QuotaMonitor(NullLogger<QuotaMonitor>.Instance)
+        {
+            ClaudeCachePath = Path.Combine(_dir, "claude-quota.json"),
+            CredentialsPath = Creds,
+            HttpHandler = _api,
+            // what `claude -p /usage` does: Claude Code renews the sign-in and rewrites the file
+            RenewWithClaudeCode = _ => { runs++; SignIn("token-2", _t0 + 3_600_000); renewed.TrySetResult(); return Task.CompletedTask; },
+        };
+        await agent.ClaudeTickAsync(_t0, default);
+        await renewed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(0, _api.Calls); // the expired token itself is never sent
+        await Task.Delay(100);       // the renewal's clean-up runs after it
+
+        await agent.ClaudeTickAsync(_t0 + 1000, default);
+        Assert.Equal(1, _api.Calls);
+        Assert.Equal("Bearer token-2", _api.LastAuthorization);
+        Assert.Equal(1, runs);
+
+        SignIn("token-3", _t0 - Minute); // expired again soon after: no second run within 15 minutes
+        await agent.ClaudeTickAsync(_t0 + 5 * Minute, default);
+        await Task.Delay(100);
+        Assert.Equal(1, runs);
+    }
+
+    [Fact]
     public async Task AFreshReadingIsNotFetchedAgainWhenTheAgentRestarts()
     {
         SignIn("token-1", _t0 + 3_600_000);
@@ -400,6 +431,7 @@ public sealed class ClaudeQuotaScheduleTests : IDisposable
         private Func<HttpResponseMessage> _next = () => new HttpResponseMessage(HttpStatusCode.InternalServerError);
         public int Calls { get; private set; }
         public Action? OnSend { get; set; }
+        public string? LastAuthorization { get; private set; }
 
         public void Respond(HttpStatusCode status, string body, int? retryAfterSeconds = null) => _next = () =>
         {
@@ -413,6 +445,7 @@ public sealed class ClaudeQuotaScheduleTests : IDisposable
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             Calls++;
+            LastAuthorization = request.Headers.Authorization?.ToString();
             OnSend?.Invoke();
             Assert.Equal("https://api.anthropic.com/api/oauth/usage", request.RequestUri!.ToString());
             return Task.FromResult(_next());

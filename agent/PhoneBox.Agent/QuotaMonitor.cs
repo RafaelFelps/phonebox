@@ -27,7 +27,8 @@ public sealed record QuotaProvider(string Id, string Name, string Plan, IReadOnl
 ///  - Claude: api.anthropic.com/api/oauth/usage with the OAuth token from ~/.claude/.credentials.json (on macOS, when
 ///    that file doesn't exist, the "Claude Code-credentials" item from the default keychain search list, normally the login Keychain)
 ///    (the endpoint behind Claude Code's /usage command). The token is only read and NEVER refreshed;
-///    Claude Code refreshes it itself (refreshing it here could break Claude Code's session).
+///    Claude Code refreshes it itself (refreshing it here could break Claude Code's session); once it has expired the
+///    agent runs Claude Code's own `/usage` command so the CLI renews it (see RenewClaudeSignIn).
 ///  - Codex: the last "rate_limits" record in the newest rollout file under ~/.codex/sessions (fully local).
 ///  - Antigravity: a running local server, or the signed-in agy CLI's structured /usage command.
 /// </summary>
@@ -312,6 +313,77 @@ public sealed partial class QuotaMonitor(ConfigStore config, ILogger<QuotaMonito
     private const long ClaudeTokenRecheckMs = 60_000;
     private const long ClaudeRefusedRetryMs = 1_800_000; // a refusal may be a passing one (a proxy, an outage)
 
+    // Claude Code started by the Claude desktop app signs in through the app and never rewrites .credentials.json, so
+    // the token there expires while Claude is in use every day. Claude Code's own `/usage` command (answered without
+    // the model: nothing is billed) makes the CLI renew the sign-in the way it always does, and the next read of the
+    // file picks the new token up. The agent never renews the token itself (see the class summary).
+    private const long ClaudeRenewEveryMs = 900_000;
+    private long _claudeRenewAt = long.MinValue / 2;
+    private int _claudeRenewing;
+
+    /// <summary>For tests: replaces running Claude Code (the default only runs for the real credentials file).</summary>
+    internal Func<CancellationToken, Task>? RenewWithClaudeCode { get; init; }
+
+    /// <summary>Starts one `claude -p /usage` in the background, at most every 15 minutes. False when none was started.</summary>
+    private bool RenewClaudeSignIn(long nowMs)
+    {
+        if (nowMs - _claudeRenewAt < ClaudeRenewEveryMs && nowMs >= _claudeRenewAt) return Volatile.Read(ref _claudeRenewing) == 1;
+        var run = RenewWithClaudeCode ?? (CredentialsPath == DefaultCredentialsPath && FindClaudeCode() is { } exe ? ct => RunClaudeUsage(exe, ct) : null);
+        if (run is null || Interlocked.Exchange(ref _claudeRenewing, 1) == 1) return false;
+        _claudeRenewAt = nowMs;
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(90));
+                await run(cts.Token);
+            }
+            catch (Exception ex) { log.LogDebug("claude sign-in renewal: {Msg}", ex.Message); }
+            finally
+            {
+                Volatile.Write(ref _claudeRenewing, 0);
+                _claudeCredsReadAt = 0; // read the file again on the next pass
+            }
+        });
+        return true;
+    }
+
+    /// <summary>The Claude Code CLI: the native installer's ~/.local/bin, then PATH (npm installs a .cmd on Windows).</summary>
+    internal static string? FindClaudeCode()
+    {
+        var names = OperatingSystem.IsWindows() ? new[] { "claude.exe", "claude.cmd" } : ["claude"];
+        var dirs = new List<string> { Path.Combine(Home, ".local", "bin") };
+        dirs.AddRange((Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries));
+        foreach (var dir in dirs)
+            foreach (var name in names)
+            {
+                try { var p = Path.Combine(dir.Trim('"'), name); if (File.Exists(p)) return p; }
+                catch (ArgumentException) { }
+            }
+        return null;
+    }
+
+    private static async Task RunClaudeUsage(string exe, CancellationToken ct)
+    {
+        var psi = new System.Diagnostics.ProcessStartInfo
+        {
+            FileName = exe.EndsWith(".cmd", StringComparison.OrdinalIgnoreCase) ? "cmd.exe" : exe,
+            WorkingDirectory = Path.GetTempPath(),
+            UseShellExecute = false, CreateNoWindow = true,
+            RedirectStandardOutput = true, RedirectStandardError = true, RedirectStandardInput = true,
+        };
+        if (exe.EndsWith(".cmd", StringComparison.OrdinalIgnoreCase)) { psi.ArgumentList.Add("/c"); psi.ArgumentList.Add(exe); }
+        foreach (var a in new[] { "-p", "/usage", "--no-session-persistence" }) psi.ArgumentList.Add(a);
+        // a Claude session's own settings must not leak in (an agent started from one would otherwise inherit them)
+        foreach (var k in psi.Environment.Keys.Where(k => k.StartsWith("CLAUDE", StringComparison.OrdinalIgnoreCase)
+            || k.StartsWith("ANTHROPIC_", StringComparison.OrdinalIgnoreCase)).ToList()) psi.Environment.Remove(k);
+        using var p = System.Diagnostics.Process.Start(psi) ?? throw new InvalidOperationException("claude did not start");
+        p.StandardInput.Close();
+        var drain = Task.WhenAll(p.StandardOutput.ReadToEndAsync(ct), p.StandardError.ReadToEndAsync(ct));
+        try { await p.WaitForExitAsync(ct); await drain; }
+        catch (OperationCanceledException) { try { p.Kill(entireProcessTree: true); } catch (Exception) { } throw; }
+    }
+
     private int _claudeOffline;         // consecutive requests that could not reach the server
     private string? _claudeRefused;     // fingerprint of the token the server refused (never the token itself)
     private long _claudeRefusedAt;
@@ -387,6 +459,7 @@ public sealed partial class QuotaMonitor(ConfigStore config, ILogger<QuotaMonito
         _claudeAwaitingToken = wait is not null;
         if (wait is not null)
         {
+            if (token.Length > 0 && RenewClaudeSignIn(nowMs)) wait = "Token expired; renewing it through Claude Code…";
             _claude = Keep(plan, wait);
             return;
         }

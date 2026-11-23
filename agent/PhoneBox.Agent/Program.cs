@@ -1,6 +1,8 @@
 using System.Net;
 using System.Text.Json;
 using PhoneBox.Agent;
+using MySteamMonitor = PhoneBox.Agent.MySteam.SteamMonitor;
+using MyDiscordMonitor = PhoneBox.Agent.MyDiscord.DiscordMonitor;
 
 var endpoint = AgentEndpoint.FromArgs(args);
 var Port = endpoint.Port;
@@ -86,9 +88,8 @@ AddMonitor<PrivacyMonitor>(builder.Services);
 AddMonitor<CalendarMonitor>(builder.Services);
 AddMonitor<DockerMonitor>(builder.Services);
 AddMonitor<ObsMonitor>(builder.Services);
-AddMonitor<DiscordMonitor>(builder.Services);
-AddMonitor<DiscordHubMonitor>(builder.Services);
-AddMonitor<SteamMonitor>(builder.Services);
+AddMonitor<MyDiscordMonitor>(builder.Services);
+AddMonitor<MySteamMonitor>(builder.Services);
 AddMonitor<BatteryMonitor>(builder.Services);
 AddMonitor<RuleEngine>(builder.Services);
 AddMonitor<ChargeGuard>(builder.Services);
@@ -554,81 +555,69 @@ app.MapPost("/api/obs/{action}", async (string action, string? scene, ObsMonitor
 // Settings › General › OBS › Test (local only: deliberately not under /api/obs, which the phone may reach over Wi-Fi)
 app.MapPost("/api/obs-test", async (ObsConfig body) => Results.Json(new { result = await ObsMonitor.TestAsync(body.Url, body.Password) }));
 
-// Discord (widget): the voice channel you are in, who is talking; mute / deafen / leave from the phone.
-app.MapGet("/api/discord", (DiscordMonitor discord, ConfigStore cfg) => Results.Json(new
+// The fork's Discord widget ("my-discord"): the voice channel you are in, who is talking; mute / deafen / leave from the phone.
+app.MapGet("/api/my-discord", (MyDiscordMonitor discord, ConfigStore cfg) => Results.Json(new
 {
     snapshot = discord.Snapshot(),
-    control = cfg.Get().Widgets().Any(w => w.Type == "discord" && w.Bool("control") != false),
+    control = cfg.Get().Widgets().Any(w => w.Type == "my-discord" && w.Bool("control") != false),
 }));
-app.MapPost("/api/discord/{action}", async (string action, DiscordMonitor discord, ConfigStore cfg, CancellationToken ct) =>
+app.MapPost("/api/my-discord/{action}", async (string action, MyDiscordMonitor discord, ConfigStore cfg, CancellationToken ct) =>
 {
-    if (!cfg.Get().Widgets().Any(w => w.Type == "discord" && w.Bool("control") != false))
+    if (!cfg.Get().Widgets().Any(w => w.Type == "my-discord" && w.Bool("control") != false))
         return Results.BadRequest(new { error = "Discord buttons are turned off in the widget's settings" });
     return await discord.Act(action, ct) is { } error ? Results.BadRequest(new { error }) : Results.Ok(new { ok = true });
 });
 // One person's volume (0–200 %) or local mute, as in Discord's user menu: only you hear the difference.
-app.MapPost("/api/discord/user/{id}", async (string id, int? volume, bool? mute, DiscordMonitor discord, ConfigStore cfg, CancellationToken ct) =>
+app.MapPost("/api/my-discord/user/{id}", async (string id, int? volume, bool? mute, MyDiscordMonitor discord, ConfigStore cfg, CancellationToken ct) =>
 {
-    if (!cfg.Get().Widgets().Any(w => w.Type == "discord" && w.Bool("control") != false))
+    if (!cfg.Get().Widgets().Any(w => w.Type == "my-discord" && w.Bool("control") != false))
         return Results.BadRequest(new { error = "Discord buttons are turned off in the widget's settings" });
     return await discord.SetUser(id, volume, mute, ct) is { } error ? Results.BadRequest(new { error }) : Results.Ok(new { ok = true });
 });
-app.MapGet("/api/discord-avatar", async (string? u, string? h, string? k, DiscordMonitor discord, DiscordHubMonitor hub, HttpContext ctx, CancellationToken ct) =>
+app.MapGet("/api/my-discord/avatar", async (string? u, string? h, MyDiscordMonitor discord, HttpContext ctx, CancellationToken ct) =>
 {
-    if (u is null || h is null) return Results.NotFound();
-    // k=guild|user: a server icon or member avatar of the "discord-hub" widget (same path, so the phone app lets it through)
-    var bytes = k is null ? await discord.Avatar(u, h, ct) : (await hub.ImageAsync(k, u, h, ct))?.Data;
-    if (bytes is null) return Results.NotFound();
+    if (u is null || h is null || await discord.Avatar(u, h, ct) is not { } bytes) return Results.NotFound();
     ctx.Response.Headers.CacheControl = "private, max-age=21600";
     return Results.Bytes(bytes, "image/png");
 });
-// Upstream's Discord widget (type "discord-hub"): servers and their voice channels to join, notifications, mute / deafen / leave.
-app.MapGet("/api/discord/hub", (DiscordHubMonitor hub, ConfigStore cfg) => Results.Json(new
+// The fork's Steam widgets ("my-steam…"): the client's games and downloads, and with an API key friends and achievements. Covers, avatars and achievement icons come through the agent (Steam's image hosts only).
+static bool MySteamOn(ConfigStore cfg) => MySteamMonitor.WidgetOn(cfg.Get());
+static bool MySteamControl(ConfigStore cfg) => cfg.Get().Widgets(enabledPagesOnly: true).Any(w => w.Type.StartsWith("my-steam", StringComparison.Ordinal) && w.Bool("control") != false);
+app.MapGet("/api/my-steam", (MySteamMonitor steam) => Results.Json(steam.Snapshot()));
+app.MapGet("/api/my-steam/library", (MySteamMonitor steam, ConfigStore cfg) => MySteamOn(cfg) ? Results.Json(new { games = steam.Library() }) : Results.Json(new { games = Array.Empty<object>() }));
+app.MapGet("/api/my-steam/game/{app:long}", async (long app, MySteamMonitor steam, ConfigStore cfg, CancellationToken ct) =>
+    !MySteamOn(cfg) || app <= 0 ? Results.NotFound() : Results.Json(await steam.GameDetails(app, ct)));
+app.MapGet("/api/my-steam/cover", async (long app, string? kind, MySteamMonitor steam, ConfigStore cfg, HttpContext ctx, CancellationToken ct) =>
 {
-    enabled = cfg.Get().Discord.Enabled,
-    snapshot = hub.Snapshot(),
-    control = DiscordHubMonitor.ControlAllowed(cfg.Get()),
-}));
-app.MapPost("/api/discord/hub/{action}", async (string action, string? channel, DiscordHubMonitor hub) =>
-    await hub.ActAsync(action, channel) is { } error ? Results.BadRequest(new { error }) : Results.Ok(new { ok = true }));
-// Steam (widgets): the client's games and downloads, and with an API key friends and achievements. Covers, avatars and achievement icons come through the agent (Steam's image hosts only).
-static bool SteamOn(ConfigStore cfg) => SteamMonitor.WidgetOn(cfg.Get());
-static bool SteamControl(ConfigStore cfg) => cfg.Get().Widgets(enabledPagesOnly: true).Any(w => w.Type.StartsWith("steam", StringComparison.Ordinal) && w.Bool("control") != false);
-app.MapGet("/api/steam", (SteamMonitor steam) => Results.Json(steam.Snapshot()));
-app.MapGet("/api/steam/library", (SteamMonitor steam, ConfigStore cfg) => SteamOn(cfg) ? Results.Json(new { games = steam.Library() }) : Results.Json(new { games = Array.Empty<object>() }));
-app.MapGet("/api/steam/game/{app:long}", async (long app, SteamMonitor steam, ConfigStore cfg, CancellationToken ct) =>
-    !SteamOn(cfg) || app <= 0 ? Results.NotFound() : Results.Json(await steam.GameDetails(app, ct)));
-app.MapGet("/api/steam/cover", async (long app, string? kind, SteamMonitor steam, ConfigStore cfg, HttpContext ctx, CancellationToken ct) =>
-{
-    if (!SteamOn(cfg) || app <= 0 || await steam.Cover(app, kind is "header" or "hero" ? kind : "portrait", ct) is not { } img) return Results.NotFound();
+    if (!MySteamOn(cfg) || app <= 0 || await steam.Cover(app, kind is "header" or "hero" ? kind : "portrait", ct) is not { } img) return Results.NotFound();
     ctx.Response.Headers.CacheControl = "private, max-age=86400";
     return Results.Bytes(img.Bytes, img.Type);
 });
-app.MapGet("/api/steam/img", async (string? u, SteamMonitor steam, ConfigStore cfg, HttpContext ctx, CancellationToken ct) =>
+app.MapGet("/api/my-steam/img", async (string? u, MySteamMonitor steam, ConfigStore cfg, HttpContext ctx, CancellationToken ct) =>
 {
-    if (!SteamOn(cfg) || await steam.Image(u, ct) is not { } img) return Results.NotFound();
+    if (!MySteamOn(cfg) || await steam.Image(u, ct) is not { } img) return Results.NotFound();
     ctx.Response.Headers.CacheControl = "private, max-age=43200";
     return Results.Bytes(img.Bytes, img.Type);
 });
-app.MapPost("/api/steam/launch/{app:long}", (long app, SteamMonitor steam, ConfigStore cfg) =>
-    !SteamControl(cfg) ? Results.BadRequest(new { error = "Steam buttons are turned off in the widget's settings" })
+app.MapPost("/api/my-steam/launch/{app:long}", (long app, MySteamMonitor steam, ConfigStore cfg) =>
+    !MySteamControl(cfg) ? Results.BadRequest(new { error = "Steam buttons are turned off in the widget's settings" })
     : steam.Launch(app) is { } error ? Results.BadRequest(new { error }) : Results.Ok(new { ok = true }));
-app.MapPost("/api/steam/update/{app:long}", (long app, SteamMonitor steam, ConfigStore cfg) =>
-    !SteamControl(cfg) ? Results.BadRequest(new { error = "Steam buttons are turned off in the widget's settings" })
+app.MapPost("/api/my-steam/update/{app:long}", (long app, MySteamMonitor steam, ConfigStore cfg) =>
+    !MySteamControl(cfg) ? Results.BadRequest(new { error = "Steam buttons are turned off in the widget's settings" })
     : steam.Update(app) is { } error ? Results.BadRequest(new { error }) : Results.Ok(new { ok = true }));
-app.MapPost("/api/steam/status/{status}",(string status, SteamMonitor steam, ConfigStore cfg) =>
-    !SteamControl(cfg) ? Results.BadRequest(new { error = "Steam buttons are turned off in the widget's settings" })
+app.MapPost("/api/my-steam/status/{status}",(string status, MySteamMonitor steam, ConfigStore cfg) =>
+    !MySteamControl(cfg) ? Results.BadRequest(new { error = "Steam buttons are turned off in the widget's settings" })
     : steam.SetStatus(status) is { } error ? Results.BadRequest(new { error }) : Results.Ok(new { ok = true }));
-app.MapPost("/api/steam/open/{page}", (string page, SteamMonitor steam, ConfigStore cfg) =>
-    !SteamControl(cfg) ? Results.BadRequest(new { error = "Steam buttons are turned off in the widget's settings" })
+app.MapPost("/api/my-steam/open/{page}", (string page, MySteamMonitor steam, ConfigStore cfg) =>
+    !MySteamControl(cfg) ? Results.BadRequest(new { error = "Steam buttons are turned off in the widget's settings" })
     : steam.OpenPage(page) is { } error ? Results.BadRequest(new { error }) : Results.Ok(new { ok = true }));
-// Settings › Steam › Test (local only: not under /api/steam, which the phone may reach over Wi-Fi)
-app.MapGet("/api/steam-test", async (SteamMonitor steam, CancellationToken ct) => Results.Json(await steam.Test(ct)));
+// Settings › Steam › Test (local only: not under /api/my-steam, which the phone may reach over Wi-Fi)
+app.MapGet("/api/my-steam-test", async (MySteamMonitor steam, CancellationToken ct) => Results.Json(await steam.Test(ct)));
 
-// Settings › General › Discord (local only: deliberately not under /api/discord, which the phone may reach over Wi-Fi)
-app.MapPost("/api/discord-connect", (DiscordMonitor discord) => { discord.RequestAuthorize(); return Results.Ok(); });
-app.MapPost("/api/discord-disconnect", (DiscordMonitor discord) => { discord.Disconnect(); return Results.Ok(); });
-app.MapGet("/api/discord-status", (DiscordMonitor discord) => Results.Json(discord.Snapshot()));
+// Settings › General › Discord (local only: deliberately not under /api/my-discord, which the phone may reach over Wi-Fi)
+app.MapPost("/api/my-discord-connect", (MyDiscordMonitor discord) => { discord.RequestAuthorize(); return Results.Ok(); });
+app.MapPost("/api/my-discord-disconnect", (MyDiscordMonitor discord) => { discord.Disconnect(); return Results.Ok(); });
+app.MapGet("/api/my-discord-status", (MyDiscordMonitor discord) => Results.Json(discord.Snapshot()));
 
 
 // Battery levels of wireless devices (headphones, mice, keyboards…), for the Device batteries widget.

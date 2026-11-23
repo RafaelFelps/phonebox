@@ -253,19 +253,6 @@
     return { snapshot: { available: true, error: null, containers: live, updated: now() } };
   }
 
-  // made-up Discord voice channel: people start and stop talking
-  const discordMe = { mute: false, deaf: false };
-  function discord() {
-    const t = Math.floor(now() / 1500);
-    const talk = (i) => ((t * 7 + i * 13) % 5) === 0;
-    const m = (id, name, i, extra = {}) => ({ id, name, avatar: null, speaking: talk(i), mute: false, deaf: false, selfMute: false, selfDeaf: false, bot: false, ...extra });
-    return { snapshot: { enabled: true, status: 'ready', message: null, user: 'you', channel: { id: '1', name: 'Squad', guild: 'Game night' },
-      selfMute: discordMe.mute, selfDeaf: discordMe.deaf, updated: now(), members: [
-        m('11', 'Alex', 1), m('12', 'Bia', 2), m('13', 'Caio', 3, { selfMute: true, speaking: false }),
-        m('14', 'you', 4, { selfMute: discordMe.mute, selfDeaf: discordMe.deaf, speaking: !discordMe.mute && talk(4) }), m('15', 'Rythm', 5, { bot: true, speaking: false }),
-      ] }, control: true };
-  }
-
   // made-up calendar around the current time: one meeting is on now
   function calendar() {
     const day = new Date(new Date().toDateString()).getTime(), H = 3600e3, M = 60e3, t = now();
@@ -548,13 +535,6 @@
     }
     if (path === '/api/quotas') return json(quotas());
     if (path === '/api/calendar') return json(calendar());
-    if (path === '/api/discord') return json(discord());
-    if (path.startsWith('/api/discord/') && method === 'POST') {
-      const a = path.slice(13);
-      if (a === 'mute') discordMe.mute = !discordMe.mute;
-      else if (a === 'deafen') discordMe.deaf = !discordMe.deaf;
-      return json({ ok: true });
-    }
     if (path === '/api/docker') return json({ ...docker(), control: allows(await config(), (t) => t === 'docker') });
     if (path === '/api/obs') { const c = await config(); return json({ ...obsState(), enabled: c.obs?.enabled !== false, control: widgets(c).some((w) => w.type === 'obs' && w.options?.control === true) }); }
     if (path === '/api/discord') {

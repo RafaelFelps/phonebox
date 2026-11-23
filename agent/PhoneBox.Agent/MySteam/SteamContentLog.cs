@@ -2,7 +2,7 @@ using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
 
-namespace PhoneBox.Agent;
+namespace PhoneBox.Agent.MySteam;
 
 /// <summary>
 /// Steam's logs/content_log.txt, read as it grows. The app manifests (appmanifest_*.acf) only get the downloaded byte

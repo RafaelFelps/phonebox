@@ -7,7 +7,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 
-namespace PhoneBox.Agent;
+namespace PhoneBox.Agent.MyDiscord;
 
 /// <param name="Volume">How loud you hear this person on the PC: 0–200 (%), 100 is Discord's default.</param>
 /// <param name="LocalMute">Muted only for you (Discord's "Mute" in the user menu), not for the channel.</param>
@@ -32,7 +32,9 @@ public sealed partial class DiscordMonitor(ConfigStore config, ILogger<DiscordMo
 
     private static readonly string[] Scopes = ["rpc", "rpc.voice.read", "rpc.voice.write"];
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(10) };
-    private static readonly string TokenPath = Path.Combine(AppPaths.ConfigDir, "discord-token.json");
+    // upstream's Discord widget keeps its own sign-in in discord-token.json, so this one has a file of its own
+    private static readonly string TokenPath = Path.Combine(AppPaths.ConfigDir, "my-discord-token.json");
+    private static readonly string LegacyTokenPath = Path.Combine(AppPaths.ConfigDir, "discord-token.json");
 
     private readonly object _lock = new();
     private readonly ConcurrentDictionary<string, TaskCompletionSource<JsonElement>> _pending = new();
@@ -249,7 +251,17 @@ public sealed partial class DiscordMonitor(ConfigStore config, ILogger<DiscordMo
 
     private static Token? LoadToken()
     {
-        try { return File.Exists(TokenPath) ? JsonSerializer.Deserialize<Token>(File.ReadAllText(TokenPath)) : null; }
+        try
+        {
+            if (File.Exists(TokenPath)) return JsonSerializer.Deserialize<Token>(File.ReadAllText(TokenPath));
+            // the sign-in from before this widget had its own file: kept, so nobody has to authorise again
+            if (File.Exists(LegacyTokenPath) && JsonSerializer.Deserialize<Token>(File.ReadAllText(LegacyTokenPath)) is { Access.Length: > 0 } old)
+            {
+                AppPaths.WriteAllTextPrivate(TokenPath, JsonSerializer.Serialize(old));
+                return old;
+            }
+            return null;
+        }
         catch (Exception) { return null; }
     }
 

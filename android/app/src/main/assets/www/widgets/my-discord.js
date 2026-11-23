@@ -23,24 +23,24 @@ const ICONS = {
   speakerOff: svg('<path d="M11 5 6 9H2v6h4l5 4z"/><path d="M22 9l-6 6M16 9l6 6"/>'),
   leave: svg('<path d="M3 15c5-5 13-5 18 0l-2 3-4-1v-3a10 10 0 0 0-6 0v3l-4 1z"/>'),
 };
-const icon = (name, cls = 'dc-ico') => { const e = h('span', cls); e.innerHTML = ICONS[name]; return e; }; // static markup only
+const icon = (name, cls = 'mdc-ico') => { const e = h('span', cls); e.innerHTML = ICONS[name]; return e; }; // static markup only
 
-W.discord = {
+W['my-discord'] = {
   needs: ['tick'],
   create(box, { o }) {
     let data = null, busy = null, lastKey = '', open = null, holdUntil = 0;
-    const head = h('div', 'w-title dc-head', h('span', 'dc-chan', o.title || 'Discord'), h('span', 'dc-guild'));
-    const list = h('div', 'dc-list');
-    const bar = h('div', 'dc-bar');
+    const head = h('div', 'w-title mdc-head', h('span', 'mdc-chan', o.title || 'Discord'), h('span', 'mdc-guild'));
+    const list = h('div', 'mdc-list');
+    const bar = h('div', 'mdc-bar');
     box.append(head, list, bar);
     const load = async () => {
-      try { data = await api('/discord'); return true; } catch (_) { return false; }
+      try { data = await api('/my-discord'); return true; } catch (_) { return false; }
     };
     const act = async (action) => {
       haptic();
       busy = action; render(true);
       try {
-        const r = await fetch(`${API}/discord/${action}`, { method: 'POST', cache: 'no-store', headers: PANEL_HEADERS });
+        const r = await fetch(`${API}/my-discord/${action}`, { method: 'POST', cache: 'no-store', headers: PANEL_HEADERS });
         const j = await r.json().catch(() => ({}));
         if (!r.ok) toast(j.error || 'Discord did not answer', 'err');
       } catch (_) { toast('The PC did not answer', 'err'); }
@@ -48,16 +48,16 @@ W.discord = {
       await load(); render(true);
     };
     const btn = (action, ico, label, on) => {
-      const b = h('button', 'dc-btn' + (on ? ' on' : '') + (busy === action ? ' busy' : ''), icon(ico), h('span', 'dc-lbl', label));
+      const b = h('button', 'mdc-btn' + (on ? ' on' : '') + (busy === action ? ' busy' : ''), icon(ico), h('span', 'mdc-lbl', label));
       b.addEventListener('click', () => act(action));
       return b;
     };
     const avatar = (m) => {
-      const a = h('div', 'dc-av');
+      const a = h('div', 'mdc-av');
       if (m.avatar) {
         const img = h('img');
         img.alt = '';
-        img.src = `${API}/discord-avatar?u=${encodeURIComponent(m.id)}&h=${encodeURIComponent(m.avatar)}`;
+        img.src = `${API}/my-discord/avatar?u=${encodeURIComponent(m.id)}&h=${encodeURIComponent(m.avatar)}`;
         img.onerror = () => img.remove();
         a.append(img);
       }
@@ -68,7 +68,7 @@ W.discord = {
     let sendTimer = null, pending = null;
     const setUser = async (id, q) => {
       try {
-        const r = await fetch(`${API}/discord/user/${encodeURIComponent(id)}?${new URLSearchParams(q)}`, { method: 'POST', cache: 'no-store', headers: PANEL_HEADERS });
+        const r = await fetch(`${API}/my-discord/user/${encodeURIComponent(id)}?${new URLSearchParams(q)}`, { method: 'POST', cache: 'no-store', headers: PANEL_HEADERS });
         if (!r.ok) toast((await r.json().catch(() => ({}))).error || 'Discord did not answer', 'err');
       } catch (_) { toast('The PC did not answer', 'err'); }
     };
@@ -78,8 +78,8 @@ W.discord = {
       sendTimer = setTimeout(async () => { sendTimer = null; const p = pending; pending = null; if (p) await setUser(p.id, { volume: p.v }); }, 120);
     };
     const panel = (m) => {
-      const val = h('span', 'dc-vval', `${m.volume ?? 100}%`);
-      const range = h('input', 'dc-range');
+      const val = h('span', 'mdc-vval', `${m.volume ?? 100}%`);
+      const range = h('input', 'mdc-range');
       Object.assign(range, { type: 'range', min: 0, max: 200, step: 1, value: m.volume ?? 100 });
       range.addEventListener('click', (e) => e.stopPropagation());
       range.addEventListener('input', () => {
@@ -90,11 +90,11 @@ W.discord = {
         m.volume = v;
         queueVolume(m.id, v);
       });
-      const muteBtn = h('button', 'dc-vbtn' + (m.localMute ? ' on' : ''), icon('speakerOff'), h('span', '', m.localMute ? 'Unmute for me' : 'Mute for me'));
+      const muteBtn = h('button', 'mdc-vbtn' + (m.localMute ? ' on' : ''), icon('speakerOff'), h('span', '', m.localMute ? 'Unmute for me' : 'Mute for me'));
       muteBtn.addEventListener('click', async (e) => { e.stopPropagation(); haptic(); await setUser(m.id, { mute: !m.localMute }); await load(); render(true); });
-      const reset = h('button', 'dc-vbtn', '100%');
+      const reset = h('button', 'mdc-vbtn', '100%');
       reset.addEventListener('click', async (e) => { e.stopPropagation(); haptic(); range.value = 100; val.textContent = '100%'; await setUser(m.id, { volume: 100 }); await load(); render(true); });
-      const p = h('div', 'dc-vol', range, val, muteBtn, reset);
+      const p = h('div', 'mdc-vol', range, val, muteBtn, reset);
       p.addEventListener('click', (e) => e.stopPropagation());
       return p;
     };
@@ -108,32 +108,32 @@ W.discord = {
       box.classList.toggle('small', small);
       if (!s) { list.replaceChildren(h('div', 'empty', 'Loading…')); bar.replaceChildren(); return; }
       if (s.status !== 'ready') {
-        head.querySelector('.dc-chan').textContent = o.title || 'Discord';
-        head.querySelector('.dc-guild').textContent = '';
+        head.querySelector('.mdc-chan').textContent = o.title || 'Discord';
+        head.querySelector('.mdc-guild').textContent = '';
         list.replaceChildren(h('div', 'empty', s.status === 'error' ? '⚠ ' + (s.message || 'Discord error') : (STATUS_TEXT[s.status] || s.message || '')));
         bar.replaceChildren();
         return;
       }
       if (!s.channel) {
-        head.querySelector('.dc-chan').textContent = o.title || 'Discord';
-        head.querySelector('.dc-guild').textContent = s.user ? ' ' + s.user : '';
+        head.querySelector('.mdc-chan').textContent = o.title || 'Discord';
+        head.querySelector('.mdc-guild').textContent = s.user ? ' ' + s.user : '';
         list.replaceChildren(h('div', 'empty', 'Not in a voice channel'));
       } else {
-        head.querySelector('.dc-chan').textContent = '🔊 ' + s.channel.name;
-        head.querySelector('.dc-guild').textContent = s.channel.guild ? ' ' + s.channel.guild : '';
+        head.querySelector('.mdc-chan').textContent = '🔊 ' + s.channel.name;
+        head.querySelector('.mdc-guild').textContent = s.channel.guild ? ' ' + s.channel.guild : '';
         const members = s.members || [];
         const canSet = data.control !== false;
         if (open && !members.some((m) => m.id === open && !m.me)) open = null;
         list.classList.toggle('grid', !small && !open && members.length > 4 && box.clientWidth > 260);
         list.replaceChildren(...members.flatMap((m) => {
           const deaf = m.deaf || m.selfDeaf, mute = m.mute || m.selfMute, vol = m.volume ?? 100;
-          const row = h('div', 'dc-row' + (m.speaking ? ' talk' : '') + (deaf || mute || m.localMute ? ' quiet' : '') + (open === m.id ? ' open' : ''),
+          const row = h('div', 'mdc-row' + (m.speaking ? ' talk' : '') + (deaf || mute || m.localMute ? ' quiet' : '') + (open === m.id ? ' open' : ''),
             avatar(m),
-            h('span', 'dc-name', m.name, m.bot ? h('small', 'dc-bot', 'BOT') : ''),
-            h('span', 'dc-flags',
-              ...(!m.me && vol !== 100 ? [h('span', 'dc-pct', `${vol}%`)] : []),
-              ...(m.localMute ? [icon('speakerOff', 'dc-flag')] : []),
-              ...(mute ? [icon('micOff', 'dc-flag')] : []), ...(deaf ? [icon('phonesOff', 'dc-flag')] : [])));
+            h('span', 'mdc-name', m.name, m.bot ? h('small', 'mdc-bot', 'BOT') : ''),
+            h('span', 'mdc-flags',
+              ...(!m.me && vol !== 100 ? [h('span', 'mdc-pct', `${vol}%`)] : []),
+              ...(m.localMute ? [icon('speakerOff', 'mdc-flag')] : []),
+              ...(mute ? [icon('micOff', 'mdc-flag')] : []), ...(deaf ? [icon('phonesOff', 'mdc-flag')] : [])));
           if (canSet && !m.me) {
             row.classList.add('tap');
             row.addEventListener('click', () => { haptic(); open = open === m.id ? null : m.id; render(true); });

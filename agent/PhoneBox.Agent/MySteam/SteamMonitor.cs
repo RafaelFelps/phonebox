@@ -2,7 +2,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text.Json;
 
-namespace PhoneBox.Agent;
+namespace PhoneBox.Agent.MySteam;
 
 public sealed record SteamNow(long AppId, string Name, long Since, int? Players);
 public sealed record SteamAchievement(string Name, string? Description, string? Icon, long UnlockedAt);
@@ -97,7 +97,7 @@ public sealed class SteamMonitor(ConfigStore config, PushStore push, ILogger<Ste
 
     private readonly ConcurrentDictionary<string, (byte[] Bytes, string Type, long At)> _images = new();
 
-    public static bool WidgetOn(AgentConfig cfg) => cfg.Widgets(enabledPagesOnly: true).Any(w => w.Type.StartsWith("steam", StringComparison.Ordinal));
+    public static bool WidgetOn(AgentConfig cfg) => cfg.Widgets(enabledPagesOnly: true).Any(w => w.Type.StartsWith("my-steam", StringComparison.Ordinal));
 
     // ------------------------------------------------------------------ what the phone reads
 

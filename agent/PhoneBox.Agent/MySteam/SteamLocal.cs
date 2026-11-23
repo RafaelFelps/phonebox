@@ -1,6 +1,6 @@
 using System.Text;
 
-namespace PhoneBox.Agent;
+namespace PhoneBox.Agent.MySteam;
 
 /// <summary>
 /// Valve's text KeyValues format (.vdf / .acf): <c>"key" "value"</c> pairs and <c>"key" { … }</c> blocks.

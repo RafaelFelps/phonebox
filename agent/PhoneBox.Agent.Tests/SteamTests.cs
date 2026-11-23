@@ -1,3 +1,4 @@
+using PhoneBox.Agent.MySteam;
 using PhoneBox.Agent;
 using Xunit;
 

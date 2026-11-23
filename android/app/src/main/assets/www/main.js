@@ -12,9 +12,8 @@ import './widgets/sky.js';
 import './widgets/web.js';
 import './widgets/photos.js';
 import './widgets/controls.js';
-import './widgets/discord.js';
-import './widgets/discordhub.js';
-import './widgets/steam.js';
+import './widgets/my-discord.js';
+import './widgets/my-steam.js';
 import './widgets/console.js';
 import './widgets/dictate.js';
 import './widgets/camera.js';
@@ -978,11 +977,11 @@ export function handleEvent(e) {
   else if (e.kind === 'reload') location.reload();
 }
 
-export const WIDGET_ICONS = { camera: '📹', dictate: '🎙️', spectrum: '📶', 'app-console': '🎛️', discord: '🎧', 'discord-hub': '💬', rules: '⚡', chargecare: '🔋', nextup: '⏭️', moon: '🌙', wordclock: '🔤', clock: '🕒', weather: '⛅', forecast: '🌦️', media: '🎵', stat: '📈', gauge: '⏲️', chart: '📊', meters: '💾', gpu: '🎮', quotas: '✳️', sessions: '🤖',
+export const WIDGET_ICONS = { camera: '📹', dictate: '🎙️', spectrum: '📶', 'app-console': '🎛️', discord: '💬', 'my-discord': '🎧', rules: '⚡', chargecare: '🔋', nextup: '⏭️', moon: '🌙', wordclock: '🔤', clock: '🕒', weather: '⛅', forecast: '🌦️', media: '🎵', stat: '📈', gauge: '⏲️', chart: '📊', meters: '💾', gpu: '🎮', quotas: '✳️', sessions: '🤖',
   github: '🐙', processes: '⚙️', shortcuts: '🎛️', button: '🔘', worldclock: '🌍', calendar: '📅', pomodoro: '🍅', countdown: '⏳', note: '📝', command: '💻',
   push: '📡', inbox: '📬', label: '🔤', analog: '🕰️', progress: '📆', stopwatch: '⏱️', timer: '⏲️', counter: '🔢', breathe: '🫁', quote: '💬',
   checklist: '✅', battery: '🔋', topprocs: '🔥', quotaring: '🎯', volume: '🔊', sun: '🌅', air: '🍃', hackernews: '📰', feeds: '🗞️', photos: '🖼️', exchange: '💱', crypto: '🪙', image: '🖼️', pcswitch: '🖥️',
-  controls: '🎚️', steam: '🎮', 'steam-friends': '👥', 'steam-library': '🕹️' };
+  controls: '🎚️', 'my-steam': '🎮', 'my-steam-friends': '👥', 'my-steam-library': '🕹️' };
 
 // ================================================================= pages
 export const pager = $('pager');

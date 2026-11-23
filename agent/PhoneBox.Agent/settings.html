@@ -494,7 +494,7 @@ dd { margin: 0; word-break: break-all; }
           <div class="field"><label>Client ID</label><input type="text" data-bind="discord.clientId" spellcheck="false" autocomplete="off"></div>
           <div class="field"><label>Client secret</label><input type="password" data-bind="discord.clientSecret" autocomplete="off"></div>
         </div>
-        <div class="row"><button class="btn sm" id="discordConnect">Connect</button><button class="btn sm" id="discordDisconnect">Sign out</button><span class="hint" id="discordState"></span></div>
+        <div class="row"><button class="btn sm" id="myDiscordConnect">Connect</button><button class="btn sm" id="myDiscordDisconnect">Sign out</button><span class="hint" id="myDiscordState"></span></div>
       </div>
 
       <div class="card">
@@ -511,7 +511,7 @@ dd { margin: 0; word-break: break-all; }
           <label class="row" style="gap:6px"><label class="switch"><input type="checkbox" data-bind="steam.notifyAchievements"><span></span></label> you unlock an achievement</label>
           <label class="row" style="gap:6px"><label class="switch"><input type="checkbox" data-bind="steam.notifyFriends"><span></span></label> a friend starts a game</label>
         </div>
-        <div class="row"><button class="btn sm" id="steamTest">Test</button><span class="hint" id="steamState"></span></div>
+        <div class="row"><button class="btn sm" id="mySteamTest">Test</button><span class="hint" id="mySteamState"></span></div>
       </div>
 
 
@@ -1737,43 +1737,43 @@ $('obsTest').onclick = async () => {
     $('obsState').textContent = r.result;
   } catch (_) { $('obsState').textContent = 'Could not check'; }
 };
-const DISCORD_STATUS = { off: 'Off', setup: 'Add the client ID and secret, then save', 'not-running': 'Discord is not running', connecting: 'Connecting…', authorize: 'Not connected yet', ready: 'Connected', error: 'Error' };
-async function discordStatus() {
+const MY_DISCORD_STATUS = { off: 'Off', setup: 'Add the client ID and secret, then save', 'not-running': 'Discord is not running', connecting: 'Connecting…', authorize: 'Not connected yet', ready: 'Connected', error: 'Error' };
+async function myDiscordStatus() {
   try {
-    const s = await (await fetch('/api/discord-status')).json();
+    const s = await (await fetch('/api/my-discord-status')).json();
     const where = s.status === 'ready' ? (s.user ? ` as ${s.user}` : '') + (s.channel ? ` · in ${s.channel.name}` : '') : '';
-    $('discordState').textContent = (DISCORD_STATUS[s.status] || s.status) + where + (s.message && s.status !== 'ready' ? ` — ${s.message}` : '');
+    $('myDiscordState').textContent = (MY_DISCORD_STATUS[s.status] || s.status) + where + (s.message && s.status !== 'ready' ? ` — ${s.message}` : '');
     return s;
-  } catch (_) { $('discordState').textContent = ''; return null; }
+  } catch (_) { $('myDiscordState').textContent = ''; return null; }
 }
-async function steamStatus() {
-  $('steamState').textContent = 'Checking…';
+async function mySteamStatus() {
+  $('mySteamState').textContent = 'Checking…';
   try {
-    const r = await (await fetch('/api/steam-test')).json();
+    const r = await (await fetch('/api/my-steam-test')).json();
     const parts = [];
     parts.push(r.client ? `Steam found (${r.installed} games installed)` : 'Steam client not found on this PC');
     if (r.user) parts.push(`account: ${r.user}`);
     parts.push(r.message);
-    $('steamState').textContent = (r.ok ? '✓ ' : '⚠ ') + parts.filter(Boolean).join(' · ');
-  } catch (_) { $('steamState').textContent = 'Could not reach the agent'; }
+    $('mySteamState').textContent = (r.ok ? '✓ ' : '⚠ ') + parts.filter(Boolean).join(' · ');
+  } catch (_) { $('mySteamState').textContent = 'Could not reach the agent'; }
 }
-$('steamTest').onclick = async () => {
+$('mySteamTest').onclick = async () => {
   if (JSON.stringify(cfg) !== saved && !(await save())) return;
-  steamStatus();
+  mySteamStatus();
 };
-$('discordConnect').onclick = async () => {
+$('myDiscordConnect').onclick = async () => {
   if (JSON.stringify(cfg) !== saved && !(await save())) return;
   if (!cfg.discord?.enabled || !cfg.discord?.clientId || !cfg.discord?.clientSecret) { toast('Turn Discord on and add the client ID and secret first', true); return; }
-  await fetch('/api/discord-connect', { method: 'POST' });
-  $('discordState').textContent = 'Choose Authorise in the Discord window…';
+  await fetch('/api/my-discord-connect', { method: 'POST' });
+  $('myDiscordState').textContent = 'Choose Authorise in the Discord window…';
   for (let i = 0; i < 90; i++) {
     await new Promise((r) => setTimeout(r, 2000));
-    const s = await discordStatus();
+    const s = await myDiscordStatus();
     if (s?.status === 'ready' || s?.status === 'error') break;
   }
 };
-$('discordDisconnect').onclick = async () => { await fetch('/api/discord-disconnect', { method: 'POST' }); setTimeout(discordStatus, 1500); };
-discordStatus();
+$('myDiscordDisconnect').onclick = async () => { await fetch('/api/my-discord-disconnect', { method: 'POST' }); setTimeout(myDiscordStatus, 1500); };
+myDiscordStatus();
 // ---------------------------------------------------------------- app console
 const consoleKeysText = (p) => (p.keys || []).map((k) => (k.label && k.label !== k.keys ? `${k.label} = ${k.keys}` : k.keys)).join('\n');
 const consoleKeysParse = (text) => text.split('\n').map((line) => line.trim()).filter(Boolean).map((line) => {

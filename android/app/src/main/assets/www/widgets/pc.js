@@ -767,11 +767,11 @@ W['steam-activity'] = {
           h('span', 'st-info', h('b', 'st-name', e.name || t('w.steam.user')), h('small', 'st-sub', label)),
           time);
       });
-      box.replaceChildren(h('div', 'st-head', h('div', 'w-title', t('w.steam.activity.title')),
+      box.replaceChildren(...[h('div', 'st-head', h('div', 'w-title', t('w.steam.activity.title')),
         h('span', 'st-count', events.length)),
       failed || s.error ? h('div', 'st-error', t('w.steam.stale')) : null,
       s.error ? h('div', 'st-error', s.error) : null,
-      events.length ? h('div', 'st-list st-activity-list', ...rows) : h('div', 'empty', t('w.steam.activity.empty')));
+      events.length ? h('div', 'st-list st-activity-list', ...rows) : h('div', 'empty', t('w.steam.activity.empty'))].filter(Boolean));
     };
     const poll = every(30000, async () => { await load(); render(); });
     return { update: () => { poll(); render(); } };

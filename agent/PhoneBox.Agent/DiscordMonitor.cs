@@ -302,7 +302,10 @@ public sealed partial class DiscordMonitor(ConfigStore config, ILogger<DiscordMo
         var tokens = LoadTokens(cfg.ClientId!);
         string? user = null;
         // a login saved by a version that didn't keep the scopes was never asked for any of the optional ones
-        if (!HasScopes(tokens?.Scope, wanted))
+        // A saved login known to lack a base permission (notifications; e.g. another widget's login with the same client
+        // ID) would fail every pass: ask Discord first, while it still may be asked (after AUTHENTICATE on a connection,
+        // Discord refuses AUTHORIZE with "Already authenticated"). Auth records the real scopes of an older login.
+        if (!HasScopes(tokens?.Scope, wanted) || tokens is { Scope: not null } && !HasScopes(tokens.Scope, Scopes))
         {
             try { user = await Login(cfg, wanted, ct); }
             catch (LoginRefusedException ex) when (ex.Prompt || tokens is not null)
@@ -389,7 +392,8 @@ public sealed partial class DiscordMonitor(ConfigStore config, ILogger<DiscordMo
         // A permission taken back in Discord (also while its setting is off): the saved login must not claim it any longer,
         // or turning the setting on would not ask for it.
         var withdrawn = r?["scopes"] is JsonArray && (tokens.Scope?.Split(' ', StringSplitOptions.RemoveEmptyEntries) ?? []).Except(_granted).Any();
-        if (withdrawn) SaveTokens(tokens with { Scope = string.Join(' ', _granted) });
+        // and an older login that never recorded its scopes keeps the ones Discord names now
+        if (withdrawn || r?["scopes"] is JsonArray && tokens.Scope is null && !isNew) SaveTokens(tokens with { Scope = string.Join(' ', _granted) });
         else if (isNew && r is not null) SaveTokens(tokens);
         return r?["user"]?["global_name"]?.GetValue<string>() ?? r?["user"]?["username"]?.GetValue<string>() ?? "Discord";
     }

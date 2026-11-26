@@ -23,7 +23,7 @@ public sealed record DiskInfo(string Name, double UsedGb, double TotalGb);
 
 public sealed record PcSnapshot(double? Cpu, double? CpuTemp, string CpuName, double RamUsedGb, double RamTotalGb,
     GpuInfo? Gpu, double NetDownBps, double NetUpBps, IReadOnlyList<DiskInfo> Disks, long UptimeSec,
-    IReadOnlyList<GpuInfo>? Gpus = null);
+    IReadOnlyList<GpuInfo>? Gpus = null, double? CpuPower = null, long Seq = 0, string? RunId = null);
 
 /// <summary>Samples CPU, RAM, network, disk and GPU metrics once a second.</summary>
 public sealed partial class SystemMonitor(ILogger<SystemMonitor> log, ConfigStore? config = null) : BackgroundService
@@ -36,10 +36,24 @@ public sealed partial class SystemMonitor(ILogger<SystemMonitor> log, ConfigStor
     // GPU sources, highest priority first: nvidia-smi, LibreHardwareMonitor, the OS (D3DKMT + counters / sysfs / ioreg)
     private volatile IReadOnlyList<GpuInfo>? _nvidia, _lhmGpus, _osGpus;
     private double? _cpuTemp;
-    private double? _appleGpuTemp; // macOS: the GPU's temperature from the SMC, added to the ioreg GPU
+    private double? _cpuPower; // package watts: LibreHardwareMonitor on Windows, RAPL on Linux; none on macOS
+    private double? _appleGpuTemp = null; // macOS: the GPU's temperature from the SMC (stays null on Windows), added to the ioreg GPU
     private IReadOnlyList<DiskInfo> _disks = [];
+    // counts samples, so the panel can tell a new one from the same one sent again (with a media or volume change)
+    private long _seq;
+    private readonly string _runId = Guid.NewGuid().ToString("N");
+
+#if WINDOWS
+    private volatile string _lhmStatus = "checking";
+    public string? LhmStatus => _lhmStatus;
+#else
+    public string? LhmStatus => null;
+#endif
 
     public PcSnapshot? Snapshot() => _snap;
+
+    internal void PublishSample(PcSnapshot sample) =>
+        _snap = sample with { Seq = ++_seq, RunId = _runId };
 
     protected override async Task ExecuteAsync(CancellationToken ct)
     {
@@ -72,7 +86,7 @@ public sealed partial class SystemMonitor(ILogger<SystemMonitor> log, ConfigStor
             const double Gb = 1024d * 1024 * 1024;
             var gpus = Gpus.Compose(_nvidia, _lhmGpus, _osGpus);
 
-            _snap = new PcSnapshot(
+            PublishSample(new PcSnapshot(
                 Cpu: cpu is { } c ? Math.Round(c, 1) : null,
                 CpuTemp: _cpuTemp,
                 CpuName: _cpuName,
@@ -83,7 +97,8 @@ public sealed partial class SystemMonitor(ILogger<SystemMonitor> log, ConfigStor
                 NetUpBps: Math.Round(up),
                 Disks: _disks,
                 UptimeSec: Environment.TickCount64 / 1000,
-                Gpus: gpus);
+                Gpus: gpus,
+                CpuPower: _cpuPower));
         }
     }
 
@@ -233,7 +248,7 @@ public sealed partial class SystemMonitor(ILogger<SystemMonitor> log, ConfigStor
             Vendor: "apple", Source: "ioreg", Integrated: true);
     }
 
-    // CPU temperature: Windows from LibreHardwareMonitor's web server (port 8085), when it is running; Linux from hwmon;
+    // CPU temperature: Windows from LibreHardwareMonitor's web server, when it is running; Linux from hwmon;
     // macOS on Apple silicon from the SMC (CPU and GPU). The same LibreHardwareMonitor answer carries the GPU sensors
     // too (hot spot, board power, fan, clocks).
     private async Task CpuTempLoop(CancellationToken ct)
@@ -241,23 +256,38 @@ public sealed partial class SystemMonitor(ILogger<SystemMonitor> log, ConfigStor
 #if !WINDOWS
         _lhmGpus = null; // LibreHardwareMonitor is Windows only
         if (OperatingSystem.IsMacOS()) { await AppleTempLoop(ct); return; }
+        var rapl = new RaplPower();
         while (!ct.IsCancellationRequested)
         {
             _cpuTemp = UnixSystem.CpuTemp();
-            await Task.Delay(_cpuTemp is null ? 30_000 : 2000, ct);
+            _cpuPower = rapl.Read(Stopwatch.GetTimestamp());
+            await Task.Delay(_cpuTemp is null && _cpuPower is null ? 30_000 : 2000, ct);
         }
         return;
 #else
 #pragma warning disable CS0162
         var failures = 0;
+        int? previousPort = null;
         while (!ct.IsCancellationRequested)
         {
+            var port = config?.Get().LibreHardwareMonitorPort ?? AgentConfig.DefaultLibreHardwareMonitorPort;
+            if (previousPort is { } oldPort && oldPort != port)
+            {
+                failures = 0;
+                ClearLhmReadings("checking");
+            }
+            previousPort = port;
             var delay = TimeSpan.FromSeconds(2);
             try
             {
-                using var doc = JsonDocument.Parse(await _http.GetStringAsync("http://127.0.0.1:8085/data.json", ct));
-                failures = 0;
+                using var doc = JsonDocument.Parse(await _http.GetStringAsync(LhmDataUrl(port), ct));
+                if (doc.RootElement.ValueKind != JsonValueKind.Object
+                    || !doc.RootElement.TryGetProperty("Children", out var children) || children.ValueKind != JsonValueKind.Array)
+                    throw new JsonException("LibreHardwareMonitor sensor tree is missing.");
                 _cpuTemp = FindCpuTemp(doc.RootElement);
+                _cpuPower = FindCpuPower(doc.RootElement);
+                failures = 0;
+                _lhmStatus = "connected";
                 try { _lhmGpus = Gpus.ParseLhm(doc.RootElement); }
                 catch (Exception ex)
                 {
@@ -269,12 +299,24 @@ public sealed partial class SystemMonitor(ILogger<SystemMonitor> log, ConfigStor
             catch
             {
                 (var clear, delay) = LhmFailed(ref failures);
-                if (clear) { _cpuTemp = null; _lhmGpus = null; }
+                if (clear) ClearLhmReadings("unavailable");
             }
             await Task.Delay(delay, ct);
         }
 #endif
     }
+
+    internal static string LhmDataUrl(int port) => $"http://127.0.0.1:{port}/data.json";
+
+#if WINDOWS
+    private void ClearLhmReadings(string status)
+    {
+        _cpuTemp = null;
+        _cpuPower = null;
+        _lhmGpus = null;
+        _lhmStatus = status;
+    }
+#endif
 
     /// <summary>
     /// After a failed LibreHardwareMonitor read: a slow answer now and then keeps the last values and asks again soon;
@@ -309,6 +351,27 @@ public sealed partial class SystemMonitor(ILogger<SystemMonitor> log, ConfigStor
         }
         Visit(root, false);
         return hottest;
+    }
+
+    /// <summary>
+    /// The CPU package power from LibreHardwareMonitor's data.json: "CPU Package" (Intel) or "Package" (AMD) in watts.
+    /// Only a CPU's own node counts, so a GPU's "GPU Package" can't be taken; the unit tells it from the temperature.
+    /// </summary>
+    internal static double? FindCpuPower(JsonElement root)
+    {
+        double? Visit(JsonElement node, bool inCpu)
+        {
+            if (node.ValueKind != JsonValueKind.Object) return null;
+            inCpu = inCpu || IsCpuNode(node);
+            if (inCpu && StrProp(node, "Text") is "CPU Package" or "Package" && StrProp(node, "Value") is { } value
+                && Gpus.ParseLhmValue(value, StrProp(node, "Type")) is { Kind: "power" } power)
+                return power.Value;
+            if (node.TryGetProperty("Children", out var kids) && kids.ValueKind == JsonValueKind.Array)
+                foreach (var k in kids.EnumerateArray())
+                    if (Visit(k, inCpu) is { } watts) return watts;
+            return null;
+        }
+        return Visit(root, false);
     }
 
     /// <summary>A string property of an object node; null when it is missing or not a string.</summary>

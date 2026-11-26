@@ -50,6 +50,11 @@ test('no widget fails to build on any page', async ({ page }) => {
 test('every widget in the catalogue builds and runs without errors', async ({ page }) => {
   test.setTimeout(90_000); // Each catalog page runs its render and polling lifecycle; the catalog now exceeds 100 types.
   const errors = watchErrors(page);
+  // Widgets that read a public service straight from the phone (crypto prices, exchange rates, Hacker News) must not
+  // make this test depend on the internet: a CORS refusal from CI once failed it. They get an error answer that allows
+  // the panel, so they show their own "unavailable" state, which is what this test checks they survive.
+  await page.route((url) => !['127.0.0.1', 'localhost'].includes(url.hostname), (route) => route.fulfill({
+    status: 503, headers: { 'Access-Control-Allow-Origin': '*' }, body: '' }));
   await page.route('**/agent/api/steam/avatar?id=*', (route) => route.fulfill({
     status: 200,
     contentType: 'image/svg+xml',
@@ -76,19 +81,28 @@ test('every widget in the catalogue builds and runs without errors', async ({ pa
   expect(errors).toEqual([]);
 });
 
-test('a chart whose metrics are all unknown falls back to cpu instead of failing', async ({ page }) => {
+test('charts explain unknown metrics and keep any known series', async ({ page }) => {
   const errors = watchErrors(page);
   await page.goto('/panel/');
   await page.evaluate(() => {
     const cfg = JSON.parse(localStorage.getItem('pb-demo-config') || 'null') || {};
     const pages = [{ id: 'p1', title: 'One', icon: '📊', enabled: true,
-      widgets: [{ id: 'c1', type: 'chart', x: 0, y: 0, w: 4, h: 3, options: { metrics: ['nosuchmetric'] } }] }];
+      widgets: [
+        { id: 'c1', type: 'chart', x: 0, y: 0, w: 4, h: 3, options: { metrics: ['nosuchmetric'] } },
+        { id: 'c2', type: 'chart', x: 4, y: 0, w: 4, h: 3, options: { metrics: ['gpupower', 'futuremetric'] } },
+        { id: 'c3', type: 'chart', x: 8, y: 0, w: 4, h: 3, options: { metrics: ['cpupower'] } },
+      ] }];
     localStorage.setItem('pb-demo-config', JSON.stringify({ ...cfg, pages, shortcuts: cfg.shortcuts || [] }));
   });
   await page.reload();
   const card = page.locator('.w-chart');
-  await expect(card.locator('canvas')).toBeVisible();
-  await expect(card.locator('.s-label')).toHaveText('Processor');
+  await expect(card.first().locator('canvas')).toBeVisible();
+  await expect(card.first().locator('.s-label')).toHaveText('Processor');
+  await expect(card.first().locator('.chart-missing')).toHaveText('Unknown metrics: nosuchmetric. Check for an app update.');
+  await expect(card.nth(1).locator('canvas')).toBeVisible();
+  await expect(card.nth(1).locator('.s-label')).toHaveText('GPU power');
+  await expect(card.nth(1).locator('.chart-missing')).toHaveText('Unknown metrics: futuremetric. Check for an app update.');
+  await expect(card.nth(2).locator('.chart-missing')).toHaveCount(0);
   expect(await page.locator('.w > .empty').count()).toBe(0);
   expect(errors).toEqual([]);
 });
@@ -359,6 +373,42 @@ test('a GPU without sensors (Apple) shows its memory, not 0 degrees', async ({ p
   expect(labels).toEqual({ gpu: '2 / 16 GB memory', temp: 'No GPU data', ram: '9.5 / 16 GB', nvidia: '61°C · 120 W', nvidiaTemp: 'Fan 30% · 1800 MHz' });
 });
 
+test('the CPU tile shows the package power next to the temperature, like the GPU tile (#442)', async ({ page }) => {
+  await page.goto('/panel/');
+  await expect(page.locator('.w').first()).toBeVisible();
+  const labels = await page.evaluate(async () => {
+    const { METRICS, shortCpu } = await import('/panel/main.js');
+    const cpuName = 'AMD Ryzen 5 5500U with Radeon Graphics';
+    const pc = (cpuTemp, cpuPower, os = 'windows') => ({ os, pc: { cpuName, cpuTemp, cpuPower } });
+    return { both: METRICS.cpu.sub(pc(61.6, 14.6)), temp: METRICS.cpu.sub(pc(61.6, null)), power: METRICS.cpu.sub(pc(null, 14.6)),
+      none: METRICS.cpu.sub(pc(null, null)) === shortCpu(cpuName), value: METRICS.cpupower.val(pc(61.6, 14.6)),
+      sub: METRICS.cpupower.sub(pc(61.6, 14.6)), windows: METRICS.cpupower.sub(pc(61.6, null)),
+      linux: METRICS.cpupower.sub(pc(61.6, null, 'linux')), mac: METRICS.cpupower.sub(pc(61.6, null, 'macos')) };
+  });
+  // Windows gets its power from LibreHardwareMonitor, so the empty tile says what to install; elsewhere it can't help
+  expect(labels).toEqual({ both: '62°C · 15 W', temp: '62°C', power: '15 W', none: true, value: 14.6,
+    sub: 'Ryzen 5 5500U with', windows: 'needs LibreHardwareMonitor', linux: 'No power data', mac: 'No power data' });
+});
+
+test('a metric tile and a gauge can show the CPU power', async ({ page }) => {
+  const errors = watchErrors(page);
+  await page.goto('/panel/');
+  await page.evaluate(() => {
+    const cfg = JSON.parse(localStorage.getItem('pb-demo-config') || 'null');
+    const pages = [{ id: 'power', title: 'Power', icon: '⚡', enabled: true, widgets: [
+      { id: 't', type: 'stat', x: 0, y: 0, w: 3, h: 2, options: { metric: 'cpupower' } },
+      { id: 'g', type: 'gauge', x: 3, y: 0, w: 2, h: 3, options: { metric: 'cpupower' } }] }];
+    localStorage.setItem('pb-demo-config', JSON.stringify({ ...(cfg || {}), pages, shortcuts: cfg?.shortcuts || [] }));
+  });
+  await page.reload();
+  const tile = page.locator('.w-stat');
+  await expect(tile.locator('.t-label')).toHaveText('CPU POWER');
+  await expect(tile.locator('.t-val small')).toHaveText('W');
+  await expect(tile.locator('.t-val b')).toHaveText(/^\d+$/);
+  await expect(page.locator('.w-gauge .g-label')).toHaveText('CPU POWER');
+  expect(errors).toEqual([]);
+});
+
 test('an AMD or Intel GPU without vendor tools shows its temperature, power share and shared memory', async ({ page }) => {
   await page.goto('/panel/');
   await expect(page.locator('.w').first()).toBeVisible();
@@ -582,11 +632,18 @@ test('the pairing page hands a checked link to the app and clears it from the ad
   await expect(page.locator('#check')).toHaveText('ABAB ABAB');
   const href = await page.locator('#open').getAttribute('href');
   expect(href).toBe(`intent://pair?v=1&pc=Desk%20PC&fp=${fp}&port=8766&h=192.168.1.10%2C100.64.0.7&c=${'A'.repeat(22)}`
-    + '#Intent;scheme=phonebox;package=net.oxog.phonebox.deskpanel;S.browser_fallback_url=https%3A%2F%2Fgithub.com%2Fersinkoc%2Fphonebox%2Freleases%2Flatest;end');
+    + '#Intent;scheme=phonebox;package=net.oxog.phonebox.deskpanel;S.browser_fallback_url=https%3A%2F%2Fersinkoc.github.io%2Fphonebox%2Fpair%2F%3Fcannot-open%3D1;end');
   // the button stays pinned to the app's package; the plain link is a separate choice for browsers that open a store (#175)
   await expect(page.locator('#plainWrap')).toBeVisible();
   expect(await page.locator('#plain').getAttribute('href')).toBe(`phonebox://pair?v=1&pc=Desk%20PC&fp=${fp}&port=8766&h=192.168.1.10%2C100.64.0.7&c=${'A'.repeat(22)}`);
   expect(new URL(page.url()).hash).toBe('');
+  // Follow the intent's fallback in the tab that already shows the pairing card.
+  const fallback = new URL(decodeURIComponent(href.match(/S\.browser_fallback_url=([^;]+)/)[1]));
+  await page.goto(`/pair/${fallback.search}${fallback.hash}`);
+  await expect(page.locator('#cannotOpen')).toBeVisible();
+  await expect(page.locator('#bad')).toBeHidden();
+  await expect(page.locator('#ok')).toBeHidden();
+  expect(page.url()).toBe(new URL('/pair/', baseURL).href);
   await page.goto('about:blank'); // a hash-only change would not run the page again
   await page.goto(`/pair/#v=1&pc=x&fp=${fp}&port=8766&h=8.8.8.8&c=${'A'.repeat(22)}`); // not a local address
   await expect(page.locator('#bad')).toBeVisible();
@@ -604,6 +661,16 @@ test('the pairing page hands a checked link to the app and clears it from the ad
   await page.goto('/pair/#v=1&fp=nope');
   await expect(page.locator('#bad')).toBeVisible();
   await expect(page.locator('#ok')).toBeHidden();
+  // A fresh tab following the fallback also gets guidance for an app that is missing or already installed.
+  await page.goto('about:blank');
+  await page.goto(`/pair/${fallback.search}${fallback.hash}`);
+  await expect(page.locator('#cannotOpen')).toBeVisible();
+  await expect(page.getByRole('heading', { name: "The PhoneBox app didn't open" })).toBeVisible();
+  await expect(page.locator('#cannotOpen')).toContainText("If PhoneBox isn't installed yet");
+  await expect(page.getByRole('link', { name: 'Download the app' })).toBeVisible();
+  await expect(page.locator('#bad')).toBeHidden();
+  await expect(page.locator('#ok')).toBeHidden();
+  expect(page.url()).toBe(new URL('/pair/', baseURL).href);
   await ctx.close();
 });
 

@@ -7,7 +7,7 @@
 4. Commit the reviewed scope, push `main`, and wait for the build and Pages workflows to pass.
 5. Run the **release** workflow on that commit. Use a draft for artifact review, or publish after the gates pass.
 
-The release workflow reuses the build checks, then tests and smoke-runs the agent on native Windows x64,
+The release workflow reuses the build checks, then tests and smoke-runs the agent on native Windows x64/ARM64,
 Linux x64/ARM64, and macOS ARM64/Intel runners. It builds the signed APK, signs the macOS agent with PhoneBox's own certificate, creates
 provenance attestations and SHA-256 checksums, and publishes the release notes from the changelog.
 The reusable artifact contract also checks the real upload/download boundary with transfer fixtures: exact release
@@ -18,6 +18,14 @@ with the same certificate and identifier, so its designated requirement equals t
 verifies the signature, compares the two requirements and smoke-runs the agent from the app; `build.yml` runs the same steps with its
 throwaway certificate on every change. The DMG is not notarized (that needs an Apple Developer ID), so a copy downloaded to another Mac
 is blocked the first time and needs System Settings > Privacy & Security > Open Anyway (right-click > Open only works up to macOS 14).
+
+The Windows x64 leg also builds `PhoneBox-<version>-win-x64-setup.exe` (Inno Setup, `packaging/windows/PhoneBox.iss`,
+`tools/make-windows-installer.ps1`) around the same `PhoneBoxAgent.exe` the zip has, signed or not as the zip's is.
+`tools/test-windows-installer.ps1` installs it silently on the runner, runs the installed agent through `smoke-agent.py`,
+upgrades over it while the agent runs, checks the Startup shortcut follows the autostart task, and uninstalls it; `build.yml` runs
+the same on every change. It installs into `%LOCALAPPDATA%\PhoneBox\app`, so the agent's self-update keeps working. The `AppId`
+in the `.iss` must never change. Inno Setup is pinned in `tools/install-inno-setup.ps1`: bump it there and the next run tests it.
+The installer file itself is not Authenticode-signed (SignPath signs `PhoneBoxAgent.exe`).
 
 Published releases update the Scoop bucket and generate winget manifests in a follow-up commit.
 Winget manifests are prepared for submission; generation alone does not mean the package is accepted into winget-pkgs.

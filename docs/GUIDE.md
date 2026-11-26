@@ -2,7 +2,7 @@
 
 [Back to PhoneBox](../README.md) · [Installation and connections](SETUP.md) · [Development](DEVELOPMENT.md)
 
-[Appearance](#appearance) · [Control Deck](#control-deck) · [Pages & templates](#pages--templates) · [Widgets](#widgets) · [Layout editor & settings](#layout-editor--settings) · [AI agent permission prompts](#ai-agent-permission-prompts) · [Webhooks](#webhooks) · [Rules](#rules) · [Security & privacy](#security--privacy)
+[Appearance](#appearance) · [Control Deck](#control-deck) · [Pages & templates](#pages--templates) · [Widgets](#widgets) · [Layout editor & settings](#layout-editor--settings) · [Power standby](#power-standby) · [AI agent permission prompts](#ai-agent-permission-prompts) · [Webhooks](#webhooks) · [Rules](#rules) · [Security & privacy](#security--privacy)
 
 ## Appearance
 
@@ -28,6 +28,14 @@ Open **Settings → General → Control Deck** to define computer-side bindings 
 matching widgets in Pages. Executable shortcuts and macros are configured in Shortcuts first; phone requests contain
 only configured IDs. PC audio listening and hold-to-confirm power buttons require separate desktop opt-ins.
 
+The audio device list, microphone controls, per-application volume, balance and switching the default device use
+Windows Core Audio, so for now they work only on Windows; on Linux and macOS the deck controls the system output's
+volume and mute and the media player, and those widgets say "only on Windows for now".
+
+**Emergency mute** mutes the computer's outputs and microphones. **Mics off, camera off** mutes only the microphones
+and stops the OBS virtual camera; the speakers stay as they are. It needs OBS connected for the camera part, and tells
+you on the phone when the camera could not be turned off. A physical webcam is not turned off.
+
 Spotify queue, library and playlist controls need a Spotify Developer Client ID and a connection through the
 settings screen. OBS needs obs-websocket and widget control permission. Application routing uses an installed
 SoundVolumeView executable; virtual-mixer controls use the installed Voicemeeter Remote DLL. MIDI requires an
@@ -41,7 +49,7 @@ Every page is a 12 × 6 grid. Start a page from one of the 30 templates (or from
 |---|---|
 | **Home** — clock, weather, now playing, CPU / GPU / RAM / network tiles | **Dashboard** — gauges, clock, media and a few shortcut keys |
 | <img src="screenshots/home.png" alt="Home"> | <img src="screenshots/dashboard.png" alt="Dashboard"> |
-| **AI quotas** — Claude and Codex limits, reset times, "at this pace: full in 1 d 5 h" | **Sessions** — Claude Code / Codex / Cursor / OpenCode / Antigravity sessions and GitHub |
+| **AI quotas** — Claude, Codex and Grok limits, reset times, "at this pace: full in 1 d 5 h" | **Sessions** — Claude Code / Codex / Grok / Cursor / OpenCode / Antigravity sessions and GitHub |
 | <img src="screenshots/ai.png" alt="AI quotas"> | <img src="screenshots/work.png" alt="Sessions"> |
 | **System** — CPU, GPU, memory, disks, network and ping charts | **Processes** — heaviest apps; tap one to end an instance or all of them |
 | <img src="screenshots/system.png" alt="System"> | <img src="screenshots/procs-sheet.png" alt="Processes"> |
@@ -63,9 +71,10 @@ More templates: **Clock**, **Focus** (pomodoro + note), **Calm** (breathing), **
 
 **Getting around.** Swipe; press the phone's **volume keys** to flip pages; tap the page dots (or long-press an empty
 spot) for an overview of all pages and jump straight to one. Webhooks and rules can switch pages too; they count down
-first (*"switching to AI in 3…"*, with Stay and Go now) and never pull a page away while you are using the panel. The
-panel returns to the home page when idle (each page can stay longer, or for good), can dim to a clock at night and
-keeps the screen on.
+first (*"switching to AI in 3…"*, with Stay and Go now) and never pull a page away while you are using the panel.
+Settings › Display › Page navigation can also show a page bar with each page's name, or hide the dots. The panel
+returns to the home page when idle (each page can stay longer, or for good), can dim to a clock at night and keeps the
+screen on (unless [power standby](#power-standby) is on).
 
 <p align="center"><img src="screenshots/overview.png" width="600" alt="Page overview"></p>
 
@@ -143,7 +152,7 @@ on a page rather than inside a stack.
 **CodexBar** is an optional source: install its `codexbar` CLI on the computer and the agent reads `usage --json`.
 The CodexBar template and quota widget can show every provider reported by the CLI, with configurable provider rotation.
 An optional cost overview shows the last 30 days of spend and tokens; it is off by default.
-Local Claude, Codex and Antigravity sources keep refreshing when CodexBar is absent, fails, or reports stale data. General settings
+Local Claude, Codex, Antigravity and Grok sources keep refreshing when CodexBar is absent, fails, or reports stale data. General settings
 provide defaults; a widget's own options override them, including an empty provider selection.
 Install a compatible CLI from [CodexBar](https://github.com/steipete/CodexBar) if available for your system.
 PhoneBox uses native local sources when no compatible CLI is installed.
@@ -152,20 +161,37 @@ PhoneBox uses native local sources when no compatible CLI is installed.
 app keeps its own sign-in to itself, so with only the desktop app the widget shows the plan and says so; its sessions
 still show up in the Sessions widget.
 
+**Grok quotas** need the Grok CLI sign-in (`grok login`). PhoneBox reads the token in `~/.grok/auth.json`
+(`GROK_HOME` overrides that folder) and asks `cli-chat-proxy.grok.com` for the credit window, only while an enabled
+page shows Grok quotas (a Quotas, CodexBar or Quota ring widget, or a Clock status line, that includes Grok). It does
+not refresh the token, start `grok`, or send the token to the phone. The bar is the weekly or monthly included credits. A prepaid
+balance is shown in dollars only when the reply includes one. The included credits stay a percentage.
+
 **Codex live quotas** are off by default (normally PhoneBox reads Codex's local session logs without running `codex`).
 Turn on **Read live Codex quotas with the Codex CLI** in **Settings › General › AI quotas & CodexBar** to query
-account-wide limits through `codex app-server` even when no Codex session is active. It runs every few minutes only
-while an enabled page shows Codex quotas and fresh CodexBar data is not already winning, and backs off on failures.
+account-wide limits through `codex app-server` even when no Codex session is active. It runs every few minutes while
+Codex is selected in the provider list and fresh CodexBar data is unavailable. A custom widget reading `/api/quotas`
+works without a built-in quota widget. On Windows the agent also looks for the CLI bundled with the Microsoft Store
+Codex app when it cannot find the CLI on PATH. Failed polls back off.
 Because it starts the Codex CLI, Codex may refresh its own sign-in in `~/.codex/auth.json`.
 
-**Native Antigravity quotas** use a running app/hub's advertised HTTP port and CSRF token, the HTTPS port of newer
-IDE servers (2.32 picks it at start-up, so the agent tries the loopback ports that server process listens
-on and accepts its self-signed certificate only for loopback addresses), or a signed-in
-`agy` CLI (1.1.11 or later). The CLI fallback runs `agy -p /usage --output-format json`, without a model prompt,
-and also finds the standard Windows installation in `%LOCALAPPDATA%\agy\bin`. Run `agy` in your terminal to sign
-in if needed. The agent reads measured session and weekly buckets, plus the plan when the local server provides it;
-CLI reports without plan metadata keep the neutral Antigravity title. Older IDE servers can supply model quotas
-through `GetUserStatus`; unavailable measurements are skipped, and weekly limits are never invented. Refresh
+If **Claude Code quotas** stay stale because the CLI sign-in expired, run `claude auth status` under the same
+user account and check whether the next quota poll picks up a fresh sign-in. Some Claude Code versions refresh
+the sign-in during that command. If it reports that you are signed out, run `claude auth login`.
+You can schedule `claude auth status` hourly under your user account if it refreshes the sign-in in your setup.
+On Windows use Task Scheduler with the full path to the Claude CLI and select **Run only when user is logged on**.
+Redirect or discard the command's output if you do not want account details recorded.
+
+**Native Antigravity quotas** use a running app/hub's advertised HTTP port and CSRF token, the HTTPS port of newer IDE
+servers (2.32 picks it at start-up, so the agent tries the loopback ports that server process listens on and accepts
+its self-signed certificate only for loopback addresses), or a signed-in `agy` CLI (1.1.11 or later). The CLI fallback
+runs `agy -p /usage --output-format json`, without a model prompt, and also finds `agy` when its folder is not on
+PATH: in `%USERPROFILE%\.gemini\bin`, where the current Windows installer and its self-update put it, in
+`%LOCALAPPDATA%\agy\bin` from older Windows installers, and in `~/.gemini/bin` on macOS and Linux. To sign in, run
+`agy` in a terminal, by its full path when its folder is not on PATH (for example `%USERPROFILE%\.gemini\bin\agy.exe`
+or `~/.gemini/bin/agy`). The agent reads measured session and weekly buckets, plus the plan when the local server
+provides it; CLI reports without plan metadata keep the neutral Antigravity title. Older IDE servers can supply model
+quotas through `GetUserStatus`; unavailable measurements are skipped, and weekly limits are never invented. Refresh
 failures retain the last measurements with an error.
 
 Tap an AI session to see its model, timing and token details. Token counters describe the local session rather than
@@ -185,6 +211,7 @@ leaves LRCLIB alone for a while (1 minute, doubling up to 30, or as long as LRCL
 Songs without timed lyrics show their plain lyrics, unless you turn that off. A player that reports no position (no
 timeline in Now playing) gets the words as a page, with a note that the lines can't follow the song. *Timing offset*
 moves the lines earlier (positive) or later when a song's timing is off.
+*Timing offset per player* does the same for one player only, one `Name=ms` per line, where the name is the one **Now playing** shows for that player (for example `Spotify=-200` or `Apple Music=1000`): a song from that player uses its own value instead of the general offset, so a player that needs a lead does not shift the others. Names are not case sensitive; a player with no line, or a line without a number, uses the general offset. Values are held to ±5000 ms, like the general offset.
 
 ## Layout editor & settings
 
@@ -199,19 +226,26 @@ Double-click the tray icon on Windows (or open <http://127.0.0.1:8765>):
 - **Rules**: automations, see [Rules](#rules).
 - **Shortcuts**: add, edit, reorder and test keys (label, emoji, colour). A key runs a program, presses a key
   combination (`ctrl+shift+m`), types text or runs a macro (keys, text, waits, other shortcuts); on / off keys show
-  their state on the phone (mute does by itself, others from a pushed value).
+  their state on the phone (mute does by itself, others from a pushed value). For a pushed value, `layout` is on
+  unless it is empty, `0`, `false`, `off` or `no`; `layout=RU` is on while it is `RU`, so one value pushed to
+  `/api/push/layout` can light one of several keys (one per keyboard layout, say).
 - **Webhooks**: the webhook key, copy-paste examples, test buttons and the values pushed so far.
 - **General**: weather location search, the temperature unit (°C or °F) and the forecast model; calendars (ICS links from Google, Outlook or iCloud), Home Assistant and OBS
   connections; night mode; theme and accent colour, orientation (landscape, portrait or follow the phone), clock seconds,
   vibration, the message when a session finishes, volume-key paging and the phone's sensors (brightness that follows the room, the night screen when the
   room goes dark, wave to wake it); [OLED burn-in protection](#appearance); [page switching](#rules) (home page, countdown, back home after);
   kiosk options (screen pinning, the panel as the phone's home screen so it starts after a reboot, keep the phone
-  awake on the charger, open the panel when the phone is plugged in, which you can turn off for a phone you also
+  awake on the charger (or let it sleep when the computer is gone: [power standby](#power-standby)), open the
+  panel when the phone is plugged in, which you can turn off for a phone you also
   use for app testing; no root needed); on macOS, optionally follow the computer lock (sleep the phone on lock,
   wake it and open PhoneBox on unlock, with an ADB connection; phones secured by a PIN or password must be unlocked
   manually). Lock sync needs the agent to run in the macOS GUI session; [battery care](#rules);
   [AI agent permission prompts](#ai-agent-permission-prompts);
-  phones (several at once, each with its own pages); Wi-Fi & Tailscale; updates.
+  phones (several at once, each with its own pages and home page); Wi-Fi & Tailscale; updates.
+- **The panel on a monitor:** `http://127.0.0.1:8765/panel/?device=monitor` (any name of letters and digits, up to 32 of them) opens the
+  panel in a browser as a device of its own. It shows up under **Phones** once it has loaded, so it can get its own
+  pages and home page there, like a phone; without `?device=` the browser shows every page and follows the global
+  home page.
 - **Photo frame** (in General): the Photo frame widget shows a folder on this computer, or one album of an Immich
   server: enter its address and an API key with the `album.read`, `asset.read` and `asset.view` permissions, press
   **Load albums** and pick one. The Immich source has been tested with Immich 3.4.2 (and earlier with 3.4.1); other versions may work.
@@ -222,6 +256,33 @@ the phone picks up changes within a few seconds.
 Use UTF-8 when editing this file externally. Saved page and shortcut icons use JSON Unicode escapes to survive
 ANSI-based editors; the settings editor displays the actual symbols. On startup, known double-encoded forms of
 the four affected default icons are repaired, with the original file kept in `config.json.bak`.
+
+## Power standby
+
+By default the phone keeps its screen on while the panel runs. **Settings › General › Display › Power standby** lets a
+panel wired to one computer sleep once that computer is gone, and light up again when it comes back:
+
+- **Off** (default): the existing display and connection settings control wake, lock-screen and charging behavior.
+- **Sleep when USB charge is cut**: the phone sleeps when the computer stops charging it.
+- **Sleep when the agent stops answering**: the phone sleeps when the agent stops answering. This also covers a
+  charge-capped port, or a board that keeps 5 V alive after shutdown.
+
+**Standby grace (s)** (3 to 600, default 30) is how long PhoneBox waits first, so a reboot or a network hiccup does
+not put the phone to sleep. Android's own screen-off timeout does the sleeping; PhoneBox only stops holding the
+screen.
+
+When the computer is back, the agent wakes the phone and opens the panel. A swipe-only lock screen is dismissed, but
+only after a wake the agent started. If the phone is protected by a PIN, password or pattern, you still unlock it
+yourself.
+
+Standby only acts on the USB phone you chose under **Phone connection**. While it is on,
+PhoneBox turns off Android's *stay awake while charging* setting (`stay_on_while_plugged_in`), because that system
+setting would keep the screen on anyway. It saves the phone's original value and puts it back when you turn standby
+off or choose another phone. If **Keep awake** is enabled, PhoneBox then applies its normal charging setting to
+the selected phone.
+
+The phone app holds no `WAKE_LOCK` permission, so the phone relights through the agent's wake key or when USB power
+returns. A phone paired over Wi-Fi only (no USB) can stay dark until you touch it.
 
 ## Wake-on-LAN
 
@@ -259,7 +320,77 @@ packet, it carries no password, so anyone on the same network who knows a MAC ad
 4. Waking from sleep or hibernate works most reliably. Waking from a full shutdown depends on the board, and
    Windows *Fast startup* can interfere: turn it off if a shut-down machine does not wake.
 
+## Phone bridge (macOS)
+
+Share what you copy between the Mac and the phone. It starts with the clipboard.
+
+- Turn on **Settings › Phone bridge › Share the clipboard with the phone**. It is off by default, and while it is off
+  the agent refuses everything the phone sends for it.
+- **Mac to phone:** copy plain text on the Mac and the paired phone's clipboard has it within about a second. Text over
+  64 KiB is not sent, and neither is anything a password manager marked as not to be shared (concealed, transient or
+  auto-generated, the markers 1Password, Bitwarden, KeePassXC and Strongbox use). A copy is read only once the clipboard
+  has stayed the same for a moment. A password manager can omit a marker or add it after the bridge has read the copy.
+  Turn off sharing before copying sensitive text.
+  On Android 9 and older, every app on the phone can read the clipboard at any time. From Android 10, the foreground
+  app and the default keyboard can read it.
+- **Phone to Mac:** Android does not let an app read the clipboard in the background, so sending from the phone is
+  something you do, in any of four places. **Send to Mac** in the text-selection menu (select text, it sits next to
+  Copy, and the text is sent without copying first) and **Share › Send to Mac** ask first, because any app can hand text
+  to them: a dialog shows the start of the text, says how much more there is that it does not show, and sends it when
+  you tap **Send to Mac** there (the button works after half a second). A **Send to Mac** tile (add it under Quick
+  Settings › Edit) and the **Send to Mac** button on the app's "sharing the clipboard" notification are one tap and send
+  what is on the clipboard straight away. A short message says whether it arrived. These entries appear in your apps
+  only while the phone's switch below is on.
+- **On the phone:** open the page overview (long-press the page dots) and tap **Phone bridge**, then turn on **Share
+  the clipboard with the Mac**. Both switches, this one and the Mac's, must be on; the screen says whether it is
+  connected, the Mac's switch is off, the computer has no bridge, the phone must be paired again (the Mac was paired
+  again or got a new key), or Android stopped the service (opening the screen starts it again). Android 13 and later asks to show notifications. On Samsung phones set PhoneBox's battery use to
+  **Unrestricted** (Settings › Apps › PhoneBox › Battery), or the system may stop the service.
+- **Notifications on the Mac:** turn on **Settings › Phone bridge › Show phone notifications on this Mac**. Calls (who is
+  calling), messages and the apps you allow on the phone then appear as macOS notifications, with the text of the
+  message. They carry the PhoneBox icon, with the phone app's own icon (Facebook, Messages) as the picture. The first time, the agent builds
+  a small program for that on your Mac (about 20 seconds, needs Xcode or the command line tools, nothing is downloaded) and
+  macOS asks whether PhoneBox may show notifications: allow it. Until then, or if it cannot be built, the notifications carry
+  Script Editor's icon, which is how macOS labels a notification from a program that has no app of its own. A banner stays for about five seconds and then waits in **Notification Center** (click the clock). **Send a
+  test notification** shows one right away; save the settings first.
+- **Notifications from the phone:** on the Phone bridge screen turn on **Show notifications on the Mac**, then tap **Allow
+  notification access** and switch PhoneBox on in the list (on Android 13 and later the switch is greyed out until you
+  open **App info**, tap ⋮ and choose **Allow restricted settings**; the screen says so). The **Apps shown on the Mac** card below lists
+  your apps with a switch each and a search box: only the ones you turn on are sent. At first only the phone's own dialer and messaging app are on.
+  **All apps** sends every app instead (banking and other private notifications too), so it is off until you turn it
+  on; the list is hidden while it is on. The Mac shows each app's icon as the notification's picture.
+  The Mac's switch (Settings › Phone bridge › Show phone notifications) must be on too; the screen shows whether the
+  last notification reached the Mac.
+- **Login codes:** with **Copy one-time codes from messages** on as well, a code in a message ("Your verification code is
+  482913", also in Greek) is put on the Mac's clipboard when the notification arrives, and the notification says "Code
+  copied", so you can paste it into the site at once. It copies only when it finds exactly one code next to a word like
+  code, OTP, PIN or κωδικός; with two numbers, or none, it copies nothing. It knows English and Greek words only, so a
+  code in a message in another language is shown but not copied. It does not send the code on to your phones.
+- **Calls and delivery:** a call is sent once, when it starts ringing, and is not repeated when you answer or hang up; a
+  missed call is sent as "Missed call". Calls show who is calling; the voice stays on the phone. Answer there. If the Mac is asleep or away, notifications are kept for two minutes and sent when it
+  is back, then dropped (a login code older than that is no use). On a Samsung phone a ringing call is posted by the in-call
+  app rather than the dialer, so it is sent whenever the default dialer is on your app list (other apps' calls, such as
+  WhatsApp, follow your list like any notification); an outgoing call looks the same there and is sent too. Opening the
+  Phone bridge screen while notifications are enabled can prompt once for **Contacts**. If Android shows only the
+  number and you allow access, the caller's name is shown on the Mac instead of the
+  number (one lookup of that number, nothing is read in bulk or kept), and a name that arrives a moment later replaces
+  the first notification.
+- The text goes only to your own paired phones over the PhoneBox link (USB or paired Wi-Fi / Tailscale), with the
+  phone's key. Enable the bridge only on a computer where users and software with access to the local agent API are
+  trusted. The text is kept in memory and never stored or logged by PhoneBox (macOS itself keeps a notification in
+  Notification Center until you clear it). A phone whose connection drops for a moment is sent what it missed when it
+  reconnects (at most the last 20 copies, and only those from the last two minutes). See [PRIVACY.md](../PRIVACY.md).
+- **macOS asking before an app reads the clipboard:** newer macOS versions can ask whether an app may paste from other
+  apps (System Settings › Privacy & Security). If macOS asks about PhoneBox, choose Allow there, or it asks again at each
+  copy. If PhoneBox is denied, macOS gives it no text, nothing you copy reaches the phone, and the Phone bridge card says
+  so (the log gets one line too, without the text).
+- Needs macOS: on Windows and Linux the card is hidden and the agent answers the phone with 501.
+
 ## AI agent permission prompts
+
+Turn on **Sound when a permission prompt appears** in **Settings › General › Display** to hear two short
+beeps at the configured sound volume. The phone stays quiet on the night screen. A desktop browser may
+require a tap or click on the panel after opening it to allow audio.
 
 When Codex asks for permission (run a command, edit a file, use an MCP tool…), the phone shows the project, tool and
 operation with **Allow** and **Deny**. Turn it on in **Settings › General › AI coding agent permission prompts** and
@@ -274,12 +405,45 @@ project, tool and the command or file — with **Allow** and **Deny**. Turn it o
 permission prompts** and press *Install hook*: PhoneBox adds a `PermissionRequest` hook to `~/.claude/settings.json`
 (and keeps a backup next to it as `settings.json.phonebox.bak`). If the phone is not connected or nobody answers in
 time, the hook returns no decision and Claude Code asks in the terminal as usual. Optionally only when you have been
-away from the keyboard for a minute.
+away from the keyboard for a minute. Each hook (Claude Code, Codex and Cursor) keeps the seconds to answer it was
+installed with. A shorter time applies to the phone card at once; for a longer one, remove the hook and install it
+again, or the hook gives up before the phone does. To have a reinstalled Cursor hook cover WSL as well, turn on **Also
+watch Cursor in WSL** and start the distro first: with the option off, *Install hook* writes only the Windows hook.
 
-WorkBuddy speaks the same hook protocol. Add the same `PermissionRequest` entry to `~/.workbuddy/settings.json` by
-hand: *Install hook* writes to `~/.claude/settings.json` only. WorkBuddy keeps its sessions in `~/.workbuddy`, so the
-card takes the project name from the workspace name WorkBuddy stores
-(`~/.workbuddy/workspace-display-names.json`) instead of the folder name.
+With other Claude Code accounts set up (the folders under **Other Claude Code accounts**), *Install hook* and *Remove
+hook* also write the `settings.json` of each of those folders that exists, with the same backup. The settings list
+those files under the button before you press it, and a folder that doesn't exist is skipped, never created. Remove
+the hook before you delete an account: *Remove hook* only reaches the folders still in the list.
+
+WorkBuddy has its own controls under **Settings › General › AI coding agent permission prompts**.
+Turn on **Ask on the phone** in the WorkBuddy section. Enable **Allow WorkBuddy approvals on the phone**
+in an AI sessions widget on an enabled page. Save the settings, then click **Install hook** in the WorkBuddy
+section. The installer uses the saved timeout and writes a `PermissionRequest` hook to `~/.workbuddy/settings.json`
+and keeps the existing settings. Restart WorkBuddy after installation and use its default permission mode to see prompts.
+To avoid duplicate prompts, remove any old PhoneBox entry you copied manually before installing this one.
+The event provides the session ID, working directory, tool name and tool input. The phone returns Allow or Deny.
+If the phone does not answer, WorkBuddy keeps its own approval flow.
+[Tencent hook reference](https://cloud.tencent.com/document/product/1831/137030#permissionrequest).
+
+**Show WorkBuddy sessions** is a separate switch. It reads the live process status files under `~/.workbuddy/sessions`
+and displays the workspace name and activity. No chat titles or conversation text are read from those files.
+
+Cursor has no permission-prompt hook; its `beforeShellExecution` and `beforeMCPExecution` hooks run before **every**
+shell command and MCP tool call of the agent, also the ones Cursor would run by itself. So Cursor prompts are off until
+you turn on **Ask on the phone for Cursor** and press *Install hook* next to Cursor in **Settings › General › AI coding
+agent permission prompts**: PhoneBox adds both hooks to `~/.cursor/hooks.json` (keeping your own hooks and a backup as
+`hooks.json.phonebox.bak`). This switch is Cursor's own: Claude Code's *Ask on the phone* and *Only when I am away*
+do not apply to it, while the seconds to answer are shared. While a phone is connected, each command then waits for
+**Allow** or **Deny** on it; Allow
+runs it without Cursor's own prompt, Deny blocks it and tells the agent so. Without a phone, without an answer within
+the timeout, or with the agent not running, the hook prints nothing and Cursor goes on as it would without it.
+Projects opened over Remote - WSL run their hooks inside the distro, from its own `~/.cursor/hooks.json`: with **Also
+watch Cursor in WSL** on, *Install hook* writes there too (in each running distro where Cursor's server has been used);
+PhoneBox remembers the distros it installed to, so *Remove hook* still takes it off there after WSL watching is
+turned off (once the distro runs: a stopped distro is never started for it). With WSL watching off and no hook
+installed in a distro, the settings page does not look into WSL at all. That hook reaches the agent on `127.0.0.1`,
+which works when WSL shares the loopback with Windows
+(`networkingMode=mirrored` in `.wslconfig`); otherwise it fails and Cursor goes on as usual.
 
 OpenCode needs no hook: prompts are off until you turn them on — press the **Ask on the phone** switch under
 **Settings › General › AI coding agent permission prompts** (or set `"phoneApprovals": true` in the `opencode` section
@@ -382,7 +546,9 @@ With **only while it lasts**, the effect ends with the condition: the phone goes
 you moved on yourself) and stays on the rule's page instead of returning home when idle; a pushed value is removed
 again. The editor starts from examples (Claude needs me → AI page, music → Music page, on air during calls, CPU busy,
 away → Ambient, evenings → Calm, doorbell, quota warning, review requested, CI failed, workday mornings, low battery,
-too warm) and has a Test button for each rule.
+too warm). The Test button runs one-shot actions. Use **Show the night screen** to dim the phone while a
+rule is active, such as after five minutes away from the PC. A tap temporarily wakes the screen. The
+normal night schedule applies independently.
 
 **Battery care** (Settings › General) keeps the phone's battery between two levels, 50–80 % by default, so a panel
 that is always plugged in lasts longer. Phones cannot stop charging without root, so PhoneBox switches the power
@@ -418,15 +584,26 @@ switchable ports). The panel keeps running over Wi-Fi while the USB power is off
   PhoneBox waits until Claude Code renews it.
 - **Codex quota and sessions** are read from local files in `~/.codex/sessions`. With the opt-in
   **Read live Codex quotas with the Codex CLI** setting (**Settings › General › AI quotas & CodexBar**, off by
-  default), PhoneBox also queries `codex app-server` about every 3 minutes (backing off on failures) while an enabled
-  page shows Codex quotas and fresh CodexBar data is not already winning; no coding session or inference prompt is
+  default), PhoneBox also queries `codex app-server` about every 3 minutes (backing off on failures) while Codex is
+  selected in the provider list and fresh CodexBar data is unavailable. No coding session or inference prompt is
   required, and local session quota stays as fallback. Claude Code sessions come from
-  `~/.claude/sessions`. OpenCode sessions (opt-in, off by default) come from its background service's local HTTP API —
+  `~/.claude/sessions`. Grok sessions come from local files under `~/.grok/sessions` (or `GROK_HOME`): the project
+  folder, status, model, reasoning effort and token counters. The chat, its title and the cost stay on this computer.
+  OpenCode sessions (opt-in, off by default) come from its background service's local HTTP API —
   the native one and each running WSL distro's — with the password OpenCode wrote to `~/.local/state/opencode/service.json`;
   only the session's folder, title, model, token counters, times and outcome are read, never prompts, replies or tool
   arguments. Cursor sessions (opt-in in **Settings › General › Cursor sessions**) come from recent agent transcripts
   under `~/.cursor/projects/*/agent-transcripts`. Only the last message's role is kept; chat text is never shown,
   stored or sent. Project names use the folder basename from Cursor's `workspaceStorage`.
+- **Claude Code and Cursor inside WSL** (Windows, opt-in): **Also watch Claude Code in WSL** (Settings › General, next to the Claude Code options)
+  and **Also watch Cursor in WSL** (Settings › General › Cursor sessions) read the same files in the running distros'
+  default users' homes, through `\\wsl.localhost\<distro>`, like OpenCode in WSL: only distros that are already
+  running (`wsl.exe --list --running` right before each read; a stopped one is never started) and every 5 seconds. A
+  Claude Code session counts as running while its process is alive in the distro's `/proc` with the start time Claude
+  Code wrote. *Show the conversation* reads a WSL session's chat file from the distro too. Without a Claude Code
+  sign-in on Windows (no file, or only Claude Desktop's plan), the Claude quota uses the one in WSL
+  (`~/.claude/.credentials.json`).
+  Cursor chats of projects opened over Remote - WSL are named after their folder.
 - **Native Antigravity quota:** the agent reads the running Antigravity server's port and CSRF token from its
   process arguments and queries its loopback quota/status API, or invokes the signed-in CLI's structured usage
   command. Only measured quota fields reach the panel; CLI conversation identifiers and token counters are omitted.

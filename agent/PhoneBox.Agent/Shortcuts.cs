@@ -11,6 +11,25 @@ public static class Shortcuts
 {
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, bool> Remembered = new();
 
+    /// <summary>
+    /// Invoked whenever the builtin:lock shortcut runs. The agent hooks this to sleep connected phones
+    /// when <see cref="DisplayConfig.LockPhoneWithShortcut"/> is enabled.
+    /// </summary>
+    public static Action<AgentConfig>? OnLocked { get; set; }
+
+    /// <summary>Locks the computer for builtin:lock. A test replaces it, so running the tests never locks the machine.</summary>
+    internal static Action LockComputer { get; set; } = PlatformLock;
+
+    private static void PlatformLock()
+    {
+#if WINDOWS
+        LockWorkStation();
+#else
+        if (OperatingSystem.IsMacOS()) Unix("pmset", "displaysleepnow");
+        else if (Sh.Run("loginctl", "lock-session") is null) Unix("xdg-screensaver", "lock");
+#endif
+    }
+
     /// <returns>An error message, or null on success.</returns>
     public static string? Run(AgentConfig cfg, string id, ILogger log, PushStore? push = null, AudioControl? audio = null, bool hold = false)
     {
@@ -31,7 +50,7 @@ public static class Shortcuts
         var on = State(sc, push, audio) ?? false;
         var target = on && sc.OffCmd is not null ? new Shortcut { Label = sc.Label, Cmd = sc.OffCmd, Args = sc.OffArgs, Cwd = sc.Cwd } : sc;
         var err = Execute(target, log, cfg, depth, push, audio);
-        if (err is null && sc.StateKey is null && sc.Cmd != "builtin:mute") Remembered[sc.Id] = !on;
+        if (err is null && sc.StateKey is null && sc.Cmd is not ("builtin:mute" or PhoneDevices.MicCmd)) Remembered[sc.Id] = !on;
         return err;
     }
 
@@ -39,7 +58,7 @@ public static class Shortcuts
     public static Dictionary<string, bool>? States(AgentConfig cfg, PushStore push, AudioControl audio)
     {
         Dictionary<string, bool>? map = null;
-        foreach (var sc in cfg.Shortcuts.Where(s => s.Toggle || s.Cmd == "builtin:mute"))
+        foreach (var sc in cfg.Shortcuts.Where(s => s.Toggle || s.Cmd is "builtin:mute" or PhoneDevices.MicCmd))
             if (State(sc, push, audio) is { } on) (map ??= [])[sc.Id] = on;
         return map;
     }
@@ -47,6 +66,8 @@ public static class Shortcuts
     public static bool? State(Shortcut sc, PushStore? push, AudioControl? audio)
     {
         if (sc.Cmd == "builtin:mute" && sc.StateKey is null) return audio?.Snapshot()?.Muted;
+        // the phone mic key is lit while the mic is live and not muted
+        if (sc.Cmd == PhoneDevices.MicCmd && sc.StateKey is null) return PhoneDevices.MicOn;
         if (sc.StateKey is not null) return PushIsOn(push, sc.StateKey);
         return Remembered.TryGetValue(sc.Id, out var r) && r;
     }
@@ -113,12 +134,20 @@ public static class Shortcuts
         return err;
     }
 
-    /// <summary>Whether the value pushed to /api/push/{key} is on: true, a number other than 0, or text other than 0 / false / off / no.</summary>
+    /// <summary>
+    /// Whether the value pushed to /api/push/{key} is on: true, a number other than 0, or text other than 0 / false / off / no.
+    /// "key=value" asks instead whether the key holds that value (letter case and surrounding spaces aside), so one pushed
+    /// value, such as a keyboard layout, can light one of several keys. Push keys cannot contain "=", so a plain key keeps
+    /// its meaning.
+    /// </summary>
     internal static bool PushIsOn(PushStore? push, string key)
     {
-        if (push?.Snapshot().TryGetValue(key, out var item) != true) return false;
+        string? want = null;
+        if (key.IndexOf('=') is var eq and >= 0) { want = key[(eq + 1)..].Trim(); key = key[..eq]; }
+        if (push?.Snapshot().TryGetValue(key.Trim(), out var item) != true) return false;
         var d = item!.Data;
         if (d.ValueKind == System.Text.Json.JsonValueKind.Object && d.TryGetProperty("value", out var v)) d = v;
+        if (want is not null) return PushEquals(d, want);
         return d.ValueKind switch
         {
             System.Text.Json.JsonValueKind.True => true,
@@ -126,6 +155,27 @@ public static class Shortcuts
             System.Text.Json.JsonValueKind.String => d.GetString() is { Length: > 0 } t && t.ToLowerInvariant() is not ("0" or "false" or "off" or "no"),
             _ => false,
         };
+    }
+
+    /// <summary>A pushed text, number or true / false compared with the wanted value: "RU" matches "ru", "2" matches 2.0.</summary>
+    private static bool PushEquals(System.Text.Json.JsonElement d, string want) => d.ValueKind switch
+    {
+        System.Text.Json.JsonValueKind.String => string.Equals(d.GetString()?.Trim(), want, StringComparison.OrdinalIgnoreCase),
+        System.Text.Json.JsonValueKind.Number => JsonNumber(want) is { } n && System.Text.Json.JsonElement.DeepEquals(d, n),
+        System.Text.Json.JsonValueKind.True => want.Equals("true", StringComparison.OrdinalIgnoreCase),
+        System.Text.Json.JsonValueKind.False => want.Equals("false", StringComparison.OrdinalIgnoreCase),
+        _ => false,
+    };
+
+    /// <summary>The wanted value as a JSON number, compared digit for digit (no rounding through double); null if it is none.</summary>
+    private static System.Text.Json.JsonElement? JsonNumber(string want)
+    {
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(want);
+            return doc.RootElement.ValueKind == System.Text.Json.JsonValueKind.Number ? doc.RootElement.Clone() : null;
+        }
+        catch (System.Text.Json.JsonException) { return null; }
     }
 
     /// <summary>Tests record what a shortcut would press or type instead of sending it to the computer.</summary>
@@ -257,10 +307,14 @@ public static class Shortcuts
                     // "packets sent", never "the machine is up"
                     if (WakeOnLan.Wake(sc.Args) is { } wakeError) throw new InvalidOperationException(wakeError);
                     break;
-#if WINDOWS
-                case "builtin:lock":
-                    LockWorkStation();
+                case PhoneDevices.MicCmd:
+                    PhoneDevices.Run(sc.Cmd, sc.Args);
                     break;
+                case "builtin:lock":
+                    LockComputer();
+                    if (cfg is not null) OnLocked?.Invoke(cfg);
+                    break;
+#if WINDOWS
                 case "builtin:monitor-off":
                     MonitorOff();
                     break;
@@ -268,10 +322,6 @@ public static class Shortcuts
                     Keys.Tap(Keys.VK_VOLUME_MUTE);
                     break;
 #else
-                case "builtin:lock":
-                    if (OperatingSystem.IsMacOS()) Unix("pmset", "displaysleepnow");
-                    else if (Sh.Run("loginctl", "lock-session") is null) Unix("xdg-screensaver", "lock");
-                    break;
                 case "builtin:monitor-off":
                     if (OperatingSystem.IsMacOS()) Unix("pmset", "displaysleepnow");
                     else Unix("xset", "dpms", "force", "off");

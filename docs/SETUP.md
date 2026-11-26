@@ -8,7 +8,7 @@
 
 ### 1. Install PhoneBox on the computer
 
-**Windows 10/11**: open PowerShell (a normal window, not *Run as administrator*) and paste:
+**Windows 10/11 x64 or Windows 11 ARM64**: open PowerShell (a normal window, not *Run as administrator*) and paste:
 
 ```powershell
 irm https://raw.githubusercontent.com/ersinkoc/phonebox/main/setup.ps1 | iex
@@ -22,7 +22,7 @@ curl -fsSL https://raw.githubusercontent.com/ersinkoc/phonebox/main/setup.sh | b
 
 Setup installs the [latest release](https://github.com/ersinkoc/phonebox/releases/latest) and anything missing:
 
-1. **Checks the computer**: Windows x64; Linux x64 / ARM64 with glibc; macOS on Apple silicon or Intel.
+1. **Checks the computer**: Windows x64 / ARM64; Linux x64 / ARM64 with glibc; macOS on Apple silicon or Intel.
 2. **Downloads and checks the agent**: the download must match the release's SHA-256 checksums. With the
    [GitHub CLI](https://cli.github.com) 2.93.0 or later signed in, it also verifies the build provenance (`gh attestation verify`).
    No .NET to install: the agent is one self-contained program.
@@ -45,7 +45,10 @@ Setup installs the [latest release](https://github.com/ersinkoc/phonebox/release
 
 The agent installs for your user. System package managers may request administrator rights for missing dependencies;
 on Linux, setup asks before using `sudo`. Run it again
-any time to update or repair PhoneBox; settings and pairings are kept. Read [`setup.ps1`](../setup.ps1) or
+any time to update or repair PhoneBox; settings and pairings are kept. Both scripts skip devices listed under
+**Settings › General › Phone connection › Ignored USB devices**, even when passed an explicit serial. If the
+installer cannot verify the USB policy, it installs the desktop agent and skips the phone app.
+This also applies when an older agent cannot read the policy from an existing configuration. Read [`setup.ps1`](../setup.ps1) or
 [`setup.sh`](../setup.sh) before you run it if you like. With `-DryRun` / `--dry-run` it downloads and checks everything
 and changes nothing.
 
@@ -96,6 +99,15 @@ curl -fsSL https://raw.githubusercontent.com/ersinkoc/phonebox/main/setup.sh | b
 - **Linux USB permissions**: if `adb devices` shows `no permissions`, adb also needs udev rules. Install
   `android-sdk-platform-tools-common` on Debian/Ubuntu or `android-udev` on Arch. Some systems also need the
   `plugdev` group (`sudo usermod -aG plugdev $USER`, then log out and in). Setup points this out when it happens.
+- **Linux shortcuts that type or press keys** use `xdotool` on X11. On Wayland they use `wtype` (wlroots, KDE) or
+  `ydotool` (GNOME, which takes neither of the others). PhoneBox uses ydotool 0.1.x (Ubuntu 24.04's `ydotool`
+  package, `sudo apt install ydotool`; 1.x isn't supported yet), which needs no `ydotoold` but needs write access to
+  `/dev/uinput`. Give that access through a group of its own, not `input`: the `input` group can usually also read
+  the real keyboards (`/dev/input/event*`), and with them every password typed. For example:
+  `sudo groupadd --system uinput`, the udev rule `KERNEL=="uinput", GROUP="uinput", MODE="0660",
+  OPTIONS+="static_node=uinput"` in `/etc/udev/rules.d/60-uinput.rules`, `sudo usermod -aG uinput $USER`, then
+  restart. Any program you run can then send key presses and mouse input, as PhoneBox does. ydotool presses the keys
+  of a US layout, so on other layouts some characters come out different, and it types only ASCII.
 - **On macOS**, the agent is signed with PhoneBox's own certificate, not an Apple Developer ID. The first time,
   macOS may ask whether it may control Music or Spotify (for Now Playing), or accept incoming connections (with Wi-Fi
   on). Shortcuts that press keys, and the Trackpad widget (its mouse events and its gestures), need *System Settings ›
@@ -103,13 +115,29 @@ curl -fsSL https://raw.githubusercontent.com/ersinkoc/phonebox/main/setup.sh | b
   carries over to later updates. Before 0.9.22 the agent was signed ad hoc, and macOS dropped the permission with every
   update, so after updating from an older version allow it once more: remove PhoneBoxAgent there with *−* and add it
   again, even if it is listed and switched on ([#269](https://github.com/ersinkoc/phonebox/issues/269)).
+- **The macOS app lives in the menu bar.** Running as `PhoneBox.app` it has no Dock icon or window; a phone icon in the
+  menu bar shows whether the phone is connected and offers Open Settings, Check for Updates (and Install update when
+  there is one), Restart Agent, Show Log, Open Config Folder, Start at Login and Quit. Start at Login adds a launchd
+  agent (`net.oxog.phonebox.app`) that opens the app, found by its bundle identifier so moving the app does not break it,
+  at your next login; it is greyed out while `setup.sh`'s own login agent exists (and `setup.sh` removes this one, so the
+  two never both start). Quitting from the system (logout, `osascript`) stops the agent the same way the menu's Quit does. The agent started by `setup.sh` or from a terminal has no menu bar icon; `--menu-bar` adds one,
+  `--no-menu-bar` (or `PHONEBOX_NO_MENU_BAR=1`) removes it from the app.
 - **Windows USB drivers**: if the phone never appears, Windows may need its USB driver. Google phones use the
   Google USB Driver; other brands have one on their support site.
 - **Scoop users**: setup stops if PhoneBox is installed with Scoop, so two copies don't fight over the same port.
   Keep using `scoop update phonebox`, or `scoop uninstall phonebox` first and then run setup.
-- **Windows on ARM** and **musl Linux** (Alpine) have no release build yet.
+- **musl Linux** (Alpine) has no release build yet.
 
 </details>
+
+#### Windows on ARM
+
+The first release with a native ARM64 package includes `PhoneBoxAgent-<version>-win-arm64.zip`.
+Run the Windows setup command above to install it, or extract the ZIP and run `PhoneBoxAgent.exe`.
+The setup script selects ARM64 even when PowerShell itself is running under emulation. Windows on ARM requires Windows 11.
+
+For older releases, try the portable `win-x64` ZIP using [Windows 11 x64 emulation](https://learn.microsoft.com/en-us/windows/arm/apps-on-arm-x86-emulation).
+Update a portable copy manually. Wi-Fi pairing below works without Android USB drivers.
 
 ### 2. Connect the phone
 
@@ -131,7 +159,7 @@ The settings are at <http://127.0.0.1:8765>, on Windows also from the tray icon.
 ### Other ways to install
 
 - **Manual download**: the [release](https://github.com/ersinkoc/phonebox/releases/latest) has the signed Android
-  APK and agents for Windows x64, Linux x64/ARM64 and macOS Apple silicon/Intel, with SHA-256 checksums and build
+  APK and agents for Windows x64/ARM64, Linux x64/ARM64 and macOS Apple silicon/Intel, with SHA-256 checksums and build
   provenance. Unzip the agent and run it. It can update itself only from the install folder in the table above. On a Mac,
   the `.dmg` holds `PhoneBox.app`: drag it to Applications (or `~/Applications`) and open it. It has no window; the settings
   are at http://127.0.0.1:8765. If you installed with `setup.sh`, that agent is already running and holds the port, so first quit it
@@ -148,6 +176,13 @@ The settings are at <http://127.0.0.1:8765>, on Windows also from the tray icon.
 
 - **winget**: a package (`ersinkoc.PhoneBox`) is prepared in [`packaging/winget`](../packaging/winget) for
   winget-pkgs. Once it is accepted, `winget install ersinkoc.PhoneBox` will install it.
+- **Windows x64 installer**: `PhoneBox-<version>-win-x64-setup.exe` on the release installs for the current user (no
+  administrator), into the folder the agent updates itself in, with a Start Menu shortcut and an optional *Start PhoneBox
+  with Windows*. Uninstall it from *Settings › Apps*; your settings are kept. The agent updates itself from the release,
+  so *Apps & features* keeps showing the version the installer wrote (the one first installed); *Settings › General ›
+  Updates* shows the running one. Run again with nothing ticked to turn *Start with Windows* off (a silent run with no
+  `/TASKS=` or `/MERGETASKS=` leaves it as it is). The installer is not code-signed, and neither is the agent yet (see
+  above), so SmartScreen may ask once: *More info › Run anyway*.
 - **From source** (for development): needs the [.NET 10 SDK](https://dotnet.microsoft.com/download) and `adb`. To build
   the phone app it also needs **JDK 17** and **Android SDK Platform 35** (for example through Android Studio), with
   `JAVA_HOME` set and `ANDROID_HOME` or `android/local.properties` (`sdk.dir`) pointing at the SDK.
@@ -190,6 +225,11 @@ curl -fsSL https://raw.githubusercontent.com/ersinkoc/phonebox/main/scripts/unin
 Without options it removes the program and the start-at-login entry and keeps the settings. `-Purge` / `--purge` also
 deletes the settings, and `-Apk` / `--apk` removes the app from the connected phone.
 
+If you uninstall PhoneBox while **power standby** is on, the phone may keep *stay awake while charging* switched off.
+Turn standby off first (**Settings › General › Display › Power standby: Off**), which puts the setting back. If it is
+already off, turn *Stay awake* back on in the phone's Developer options, or run
+`adb shell settings put global stay_on_while_plugged_in 7` (use your own value if it was different).
+
 ### What works where
 
 <details><summary><b>Full platform compatibility</b></summary>
@@ -198,8 +238,9 @@ deletes the settings, and `-Apk` / `--apk` removes the app from the connected ph
 |---|---|---|---|
 | CPU, RAM, network, disks, ping | ✓ | ✓ | ✓ |
 | CPU temperature | LibreHardwareMonitor | ✓ (hwmon) | — |
+| CPU power | LibreHardwareMonitor | RAPL, where the agent may read it (most distributions allow only root) | — |
 | GPU load, VRAM, temperature | Any vendor (Windows GPU counters); NVIDIA adds power, fan and clocks (`nvidia-smi`), AMD / Intel add them with LibreHardwareMonitor | NVIDIA (`nvidia-smi`), AMD (`amdgpu` sysfs), Intel (`i915` / `xe`: load and clock) | Apple silicon (`ioreg`) |
-| Now playing + controls | ✓ (any app) | ✓ (MPRIS via `playerctl`) | System media, including browser video, with `nowplaying-cli`; Spotify and Music fallback |
+| Now playing + controls | ✓ (apps in Windows' media controls) | ✓ (MPRIS via `playerctl`) | System media, including browser video, with `nowplaying-cli`; Spotify and Music fallback |
 | Volume | ✓ | ✓ (`wpctl` / `pactl`) | ✓ |
 | Processes, end one / all | ✓ | ✓ (your own) | ✓ (your own) |
 | App icons | ✓ | ✓ (icon theme) | ✓ (app bundles) |
@@ -209,29 +250,32 @@ deletes the settings, and `-Apk` / `--apk` removes the app from the connected ph
 | Tray icon | ✓ | — (settings in the browser) | — |
 | Start at login | Startup folder | systemd user service | launchd agent |
 
+On Windows, Now playing shows the apps that appear in Windows' own media controls (the panel above the volume in Quick Settings): Spotify, browsers, Media Player and most streaming apps. A player that does not report itself there, such as VLC 3, stays blank on the phone. While no other app is in those controls, play / pause sends the keyboard's media key, which such a player may act on (VLC does when its media keys are global hotkeys or it is in front), but the phone cannot tell whether it plays.
+
 On macOS, `nowplaying-cli` supplies system media metadata and cover art. The agent labels matching Safari or Chrome tabs as YouTube or YouTube Music. The progress bar advances from the last position supplied by macOS; Safari may report an outdated starting position. Volume follows the selected system output. When macOS does not expose its volume, an optional `m1ddc` installation can read it from a compatible display; display volume is read only in PhoneBox. Unsupported outputs show `n/a`. Apple silicon GPU usage comes from IORegistry when macOS exposes it; temperature, power and VRAM figures may remain unavailable.
 
 </details>
 
 Optional extras that light up more widgets: the [GitHub CLI](https://cli.github.com) (`gh auth login`), Claude Code,
-Codex, and [LibreHardwareMonitor](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor) with its web server on
-port 8085 for the CPU temperature and, on AMD and Intel graphics cards, the hot spot, memory temperature, board power in
+Codex, and [LibreHardwareMonitor](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor) with its web server
+running for CPU temperature and, on AMD and Intel graphics cards, the hot spot, memory temperature, board power in
 watts, fan speed and clocks. Without it Windows still reports any GPU's load, VRAM, temperature and power share; NVIDIA
 cards get the full set from `nvidia-smi`. A PC with two GPUs (a graphics card and the processor's integrated one) shows
 both: the card is the main GPU, the GPU details widget can show either.
 
 #### LibreHardwareMonitor on Windows
 
-PhoneBox reads LibreHardwareMonitor's sensor list from `http://127.0.0.1:8085/data.json` whenever it is there; there
-is nothing to turn on in PhoneBox.
+PhoneBox reads LibreHardwareMonitor's sensor list from `http://127.0.0.1:8085/data.json` by default.
 
 1. Download the latest release from
    [LibreHardwareMonitor's releases](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor/releases), unzip it
    to a folder of its own and start `LibreHardwareMonitor.exe` **as administrator** (CPU temperatures and several GPU
    sensors need it).
-2. In its menu choose **Options › Remote Web Server › Run**. The port stays **8085** (PhoneBox only looks there).
-3. Check it in a browser on the PC: <http://127.0.0.1:8085/data.json> should show a long JSON text. Within a few
-   seconds the CPU temperature and the extra GPU values appear on the phone.
+2. In its menu choose **Options › Remote Web Server › Run**. If you use a different port, set the same port in
+   the **LibreHardwareMonitor** section below the preview in PhoneBox Settings › Pages, then click **Save**.
+3. Check `http://127.0.0.1:<port>/data.json` in a browser on the PC. PhoneBox shows the CPU temperature, package power
+   and extra GPU values as your hardware reports them. If the previous port was unavailable, the next reading can take
+   up to 30 seconds.
 4. To keep it running: **Options › Start Minimized**, **Minimize To Tray** and **Run On Windows Startup**.
 
 The web server answers on every network the PC is on. If Windows Firewall asks, PhoneBox only needs it on this
@@ -292,6 +336,17 @@ Is the agent running (tray icon)? Run `adb devices`: the phone must be listed as
 accept the USB debugging prompt on the phone. If several devices are connected, pick the phone under
 **Settings › General › Phone connection**. Over Wi-Fi, check that Wi-Fi is enabled on the agent, pair with the
 QR code or over USB, and allow the agent through the firewall for your private network.
+
+If `adb devices` itself doesn't answer, the adb server is hung. The agent tries to restart a local adb server that has
+been hung for a minute, which also ends other tools' adb sessions (Android Studio, scrcpy). It doesn't while the phone
+app is being installed, or when `ADB_SERVER_SOCKET` or `ANDROID_ADB_SERVER_ADDRESS` points adb at a server on another
+machine, and it tries at most once every 5 minutes. It ends the server's process, found with `netstat` on Windows and
+`lsof` (or `ss` on Linux) elsewhere. When `agent.log` says the process couldn't be found and it is "only asking it to
+stop", the agent could only send `adb kill-server`, which a hung server may ignore: the restart may not have happened.
+
+To recover at once from a local adb server, end `adb.exe` in Task Manager (`pkill adb` on Linux and macOS):
+`adb kill-server` asks the server itself, so a hung one may not answer it. With `ADB_SERVER_SOCKET` or
+`ANDROID_ADB_SERVER_ADDRESS` pointing at another machine, restart the adb server on that machine instead.
 </details>
 
 <details><summary><b>The phone keeps dropping off USB.</b></summary>
@@ -299,11 +354,17 @@ QR code or over USB, and allow the agent through the firewall for your private n
 The panel carries on over Wi-Fi when Wi-Fi is on, and **Settings › General › Phone connection** says what the phone
 itself sees: if it is charging but has no USB data connection, the cable or the port only carries power — try another
 cable, or a port straight on the computer instead of a hub or a front-panel port. Updates of the phone app need USB.
+
+On some Samsung phones the USB data link restarts each time charging stops, starts or changes speed, and adb sees
+the phone go away for a few seconds. **Protect battery** (charging stops at 85 % and starts again below it) does
+this every few minutes, and fast charging can too. Turning Protect battery off made the drops rare on a Galaxy A31
+(Android 11), but not gone ([#410](https://github.com/ersinkoc/phonebox/issues/410)); there, Wi-Fi with the phone on
+a charger of its own works without drops.
 </details>
 
 <details><summary><b>Some widgets show "—" or "No data".</b></summary>
 
-GPU values come from Windows itself (the temperature, as in Task Manager, needs Windows 10 2004 or later and a WDDM 2.4 driver), `nvidia-smi` for NVIDIA cards, `amdgpu` sysfs on Linux, an Intel card's DRM usage counters on Linux, or IORegistry on Apple Silicon. An Intel card's load on Linux needs a kernel whose driver exposes busy counters in fdinfo (`i915` from kernel 5.19, `xe`); a card whose programs never report them shows no load. A program that starts using the GPU is picked up within about 30 seconds and counts from the reading after that, and programs of other users are counted only when Linux lets the agent read them (normally as root or with `CAP_SYS_PTRACE`). The GPU hot spot and an AMD or Intel card's watts, fan and clocks need LibreHardwareMonitor. CPU temperature needs LibreHardwareMonitor's web server on port 8085,
+GPU values come from Windows itself (the temperature, as in Task Manager, needs Windows 10 2004 or later and a WDDM 2.4 driver), `nvidia-smi` for NVIDIA cards, `amdgpu` sysfs on Linux, an Intel card's DRM usage counters on Linux, or IORegistry on Apple Silicon. An Intel card's load on Linux needs a kernel whose driver exposes busy counters in fdinfo (`i915` from kernel 5.19, `xe`); a card whose programs never report them shows no load. A program that starts using the GPU is picked up within about 30 seconds and counts from the reading after that, and programs of other users are counted only when Linux lets the agent read them (normally as root or with `CAP_SYS_PTRACE`). The GPU hot spot and an AMD or Intel card's watts, fan and clocks need LibreHardwareMonitor. Windows CPU temperature needs LibreHardwareMonitor's web server,
 GitHub needs `gh auth login`, quotas and sessions need Claude Code / Codex to have been used on this PC.
 </details>
 
@@ -314,6 +375,27 @@ certificate authority its certificate chains to (Let's Encrypt's ISRG Root X1). 
 [letsencrypt.org/certificates](https://letsencrypt.org/certificates/), rename it to `isrgrootx1.crt`, and install it
 under **Settings › Security › Install from device storage**. The panel itself talks to the computer and is not
 affected. Thanks to [phongnguyen2277](https://github.com/phongnguyen2277) for finding this (#184).
+</details>
+
+<details><summary><b>On an x86 tablet the panel asks for a newer WebView, and the Play Store has none.</b></summary>
+
+Some older tablets have an Intel (x86) processor, such as the Galaxy Tab 3 10.1 (GT-P5200). On the one we tried, the
+Play Store offered no WebView or Chrome newer than 101, below the 105 the panel needs to scale widgets. On a rooted
+device running LineageOS 14.1 (Android 7), LineageOS's own x86 WebView can replace the system one:
+
+1. Take `webview.apk` from the commit with
+   [WebView 119.0.6045.134](https://github.com/LineageOS/android_external_chromium-webview_prebuilt_x86/tree/91c9fde9772f760daebb73402e5f3dce9808f427)
+   (the APK is stored with Git LFS). 119 is the last Chromium for Android 7: from 120 on, WebView needs Android 8.0
+   (API 26), and the newer builds on that repository's default branch will not run on Android 7.
+2. Keep a copy of `/system/app/webview/webview.apk`, put the new APK in its place and restart the tablet.
+   `adb install -r` cannot do this, because the new APK is signed with a different key than the system one.
+3. On Android 7 to 9, Chrome can be the active WebView, and then replacing the system one changes nothing. Open
+   **Developer options › WebView implementation**, pick *Android System WebView* (or disable Chrome), and check that
+   the version is 105 or later under **Settings › Apps › Android System WebView**; the panel's update notice also
+   goes away.
+
+This worked on a GT-P5200 with LineageOS 14.1 (Android 7.1.2), where Chrome 101 is installed next to it. Without root
+there is no newer WebView for these devices.
 </details>
 
 <details><summary><b>I want the volume keys to change the phone's volume.</b></summary>

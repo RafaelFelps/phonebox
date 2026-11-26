@@ -14,6 +14,8 @@ public sealed class MediaMonitor(ILogger<MediaMonitor> log) : BackgroundService
 
     public AlbumArt? Art => _art.Current;
     public MediaSnapshot? Snapshot() => _snap;
+    /// <summary>The same as Snapshot here: Windows hears about changes, it does not poll (see Unix/MediaMonitor).</summary>
+    public MediaSnapshot? Peek() => _snap;
 
     protected override async Task ExecuteAsync(CancellationToken ct)
     {
@@ -99,23 +101,24 @@ public sealed class MediaMonitor(ILogger<MediaMonitor> log) : BackgroundService
         catch (Exception ex) { log.LogDebug("cover art: {Msg}", ex.Message); }
 
         var sampledAt = System.Diagnostics.Stopwatch.GetTimestamp();
-        var pos = tl.Position;
-        if (playing && tl.LastUpdatedTime.Year > 2000)
-            pos += DateTimeOffset.Now - tl.LastUpdatedTime;
-        var dur = tl.EndTime - tl.StartTime;
-        if (dur > TimeSpan.Zero && pos > dur) pos = dur;
-        if (pos < TimeSpan.Zero) pos = TimeSpan.Zero;
+        var rate = MediaTimeline.NormalizePlaybackRate(pb.PlaybackRate);
+        var elapsedMs = tl.LastUpdatedTime.Year > 2000
+            ? (DateTimeOffset.Now - tl.LastUpdatedTime).TotalMilliseconds
+            : 0;
+        var durMs = (long)Math.Max(0, (tl.EndTime - tl.StartTime).TotalMilliseconds);
+        var posMs = MediaTimeline.AdvancePositionMs((long)tl.Position.TotalMilliseconds, elapsedMs, playing, rate, durMs);
 
         _snap = new MediaSnapshot(
-            App: FriendlyApp(s.SourceAppUserModelId),
+            App: MediaAppName.Friendly(s.SourceAppUserModelId),
             Title: props.Title ?? "",
             Artist: props.Artist ?? "",
             Album: props.AlbumTitle ?? "",
             Playing: playing,
-            PosMs: (long)pos.TotalMilliseconds,
-            DurMs: (long)Math.Max(0, dur.TotalMilliseconds),
+            PosMs: posMs,
+            DurMs: durMs,
             ArtId: Art is null ? 0 : _art.Id,
-            CanSeek: pb.Controls.IsPlaybackPositionEnabled) { SampledAt = sampledAt };
+            CanSeek: pb.Controls.IsPlaybackPositionEnabled,
+            PlaybackRate: rate) { SampledAt = sampledAt };
     }
 
     public async Task<bool> Control(string action, long? ms)
@@ -147,17 +150,5 @@ public sealed class MediaMonitor(ILogger<MediaMonitor> log) : BackgroundService
         var ok = await s.TryPauseAsync();
         try { await Poll(); } catch { }
         return ok;
-    }
-
-    private static string FriendlyApp(string id)
-    {
-        var l = id.ToLowerInvariant();
-        if (l.Contains("spotify")) return "Spotify";
-        if (l.Contains("chrome")) return "Chrome";
-        if (l.Contains("firefox") || l.Contains("308046b0af4a39cb")) return "Firefox";
-        if (l.Contains("msedge")) return "Edge";
-        if (l.Contains("zune") || l.Contains("media")) return "Media Player";
-        if (l.Contains("vlc")) return "VLC";
-        return Path.GetFileNameWithoutExtension(id.Split('!')[0]);
     }
 }

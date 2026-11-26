@@ -38,6 +38,31 @@ public static class Lan
 
     public static string Fingerprint(X509Certificate2 cert) => Convert.ToHexString(SHA256.HashData(cert.RawData)).ToLowerInvariant();
 
+    /// <summary>
+    /// Why the Wi-Fi port cannot be opened, or null when it can: "reserved" (access denied: a port range Windows keeps
+    /// for itself, or a program that holds the port exclusively), "in-use" (another program listens on it) or "failed".
+    /// Checked before the agent starts listening, so a bad port turns Wi-Fi off instead of stopping the whole agent.
+    /// </summary>
+    public static string? PortProblem(int port)
+    {
+        try
+        {
+            var probe = new TcpListener(IPAddress.Any, port);
+            probe.Start();
+            probe.Stop();
+            return null;
+        }
+        catch (SocketException ex)
+        {
+            return ex.SocketErrorCode switch
+            {
+                SocketError.AccessDenied => "reserved",
+                SocketError.AddressAlreadyInUse => "in-use",
+                _ => "failed",
+            };
+        }
+    }
+
     /// <summary>Addresses the phone can try: private LAN IPv4 addresses first, then Tailscale (100.64.0.0/10).</summary>
     public static IReadOnlyList<string> Addresses()
     {
@@ -92,14 +117,16 @@ public static class Lan
         || path == "/api/controls/state" || path == "/api/controls/listen" || path.StartsWithSegments("/api/controls/radio-logo") || path.StartsWithSegments("/api/controls/command") || path.StartsWithSegments("/api/controls/obs")
         || path.StartsWithSegments("/api/state") || path.StartsWithSegments("/api/config") || path.StartsWithSegments("/api/art")
         || path.StartsWithSegments("/api/media") || path.StartsWithSegments("/api/volume") || path.StartsWithSegments("/api/quotas")
+        || path == "/api/stocks" || path == "/api/stocks/minutes"
+        || path == "/api/guba"
         // the Synced lyrics widget: the playing track's lyrics (LRCLIB is asked only for a widget with its lookup on)
-        || path == "/api/lyrics"
+        || path == "/api/lyrics" || path == "/api/wallpaper"
         || path.StartsWithSegments("/api/work") || path.StartsWithSegments("/api/procs") || path.StartsWithSegments("/api/run")
         || path.StartsWithSegments("/api/apps") || path.StartsWithSegments("/api/shortcuts/icon") || path.StartsWithSegments("/api/console") || path == "/api/dictate"
         // the Steam library widget: the list of installed games, an installed game's cover (the tiles' <img>), and starting a
         // game (off unless the asking widget, on an enabled page, allows it). /api/steam/games, the settings page's picker, stays local.
         || path == "/api/steam/library" || path == "/api/steam/cover" || path == "/api/steam/launch"
-        || path.StartsWithSegments("/api/widget") || path.StartsWithSegments("/api/calendar") || path.StartsWithSegments("/api/feeds") || path.StartsWithSegments("/api/photos") || path == "/api/camera" || path == "/api/spectrum" || path.StartsWithSegments("/api/docker") || path.StartsWithSegments("/api/obs") || path.StartsWithSegments("/api/discord") || path == "/api/steam" || path == "/api/steam/avatar" || path.StartsWithSegments("/api/batteries") || path.StartsWithSegments("/api/ha/states") || path.StartsWithSegments("/api/ha/toggle") || path.StartsWithSegments("/api/approvals") || path.StartsWithSegments("/api/rules/pause") || path.StartsWithSegments("/api/phone/battery") || path.StartsWithSegments("/api/stream") || path.StartsWithSegments("/api/trackpad") || path == "/api/pair/claim" || path == "/api/wake/macs" || IsWebhook(path);
+        || path.StartsWithSegments("/api/widget") || path.StartsWithSegments("/api/calendar") || path.StartsWithSegments("/api/feeds") || path.StartsWithSegments("/api/photos") || path == "/api/camera" || path == "/api/spectrum" || path.StartsWithSegments("/api/docker") || path.StartsWithSegments("/api/obs") || path.StartsWithSegments("/api/discord") || path == "/api/steam" || path == "/api/steam/avatar" || path.StartsWithSegments("/api/batteries") || path.StartsWithSegments("/api/ha/states") || path.StartsWithSegments("/api/ha/toggle") || path.StartsWithSegments("/api/approvals") || path.StartsWithSegments("/api/rules/pause") || path.StartsWithSegments("/api/phone/battery") || path.StartsWithSegments("/api/stream") || path.StartsWithSegments("/api/trackpad") || path == "/api/pair/claim" || path == "/api/wake/macs" || path == "/api/bridge/clipboard" || path == "/api/bridge/stream" || path == "/api/bridge/notification" || IsWebhook(path);
 
     /// <summary>
     /// The one Wi-Fi path that needs no key: a phone pairing without USB trades a one-time code for it (see

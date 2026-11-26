@@ -75,6 +75,87 @@ public sealed class ClaudeQuotaScheduleTests : IDisposable
     }
 
     [Fact]
+    public async Task ExtraCredentialDirsGetACardEachAndAMissingOneSaysSo()
+    {
+        var work = Directory.CreateDirectory(Path.Combine(_dir, "work")).FullName;
+        File.WriteAllText(Path.Combine(work, ".credentials.json"), SignInJson("token-work", _t0 + 3_600_000));
+        _api.Respond(HttpStatusCode.OK, Usage);
+        var agent = Agent();
+        ClaudeCredentialDir[] dirs =
+        [
+            new() { Label = "work", Dir = work },
+            new() { Label = "typo", Dir = Path.Combine(_dir, "missing") },
+        ];
+
+        await agent.ExtraClaudeTickAsync(dirs, _t0, default);
+        await agent.ExtraClaudeTickAsync(dirs, _t0 + Minute, default);
+
+        Assert.Equal(1, _api.Calls); // each account keeps its own 3-minute schedule
+        var cards = agent.Snapshot();
+        Assert.Equal(42, Assert.Single(cards, p => p.Id == "claude@work" && p.Name == "Claude · work").Limits.Single().Percent);
+        Assert.NotNull(Assert.Single(cards, p => p.Id == "claude@typo").Error);
+        Assert.DoesNotContain(cards, p => p.Id == "claude"); // no default sign-in here: no default card
+
+        await agent.ExtraClaudeTickAsync([], _t0 + 2 * Minute, default);
+        Assert.DoesNotContain(agent.Snapshot(), p => p.Id.StartsWith("claude@"));
+    }
+
+    [Fact]
+    public async Task AnExpiredOrMalformedExtraSignInShowsOnItsOwnCardAndIsNeverSent()
+    {
+        var old = Directory.CreateDirectory(Path.Combine(_dir, "old")).FullName;
+        File.WriteAllText(Path.Combine(old, ".credentials.json"), SignInJson("token-old", _t0 - 3_600_000));
+        var bad = Directory.CreateDirectory(Path.Combine(_dir, "bad")).FullName;
+        File.WriteAllText(Path.Combine(bad, ".credentials.json"), """{"something":"else"}""");
+        SignIn("token-default", _t0 + 3_600_000); // a good default sign-in must not stand in for either
+        _api.Respond(HttpStatusCode.OK, Usage);
+        var agent = Agent();
+
+        await agent.ExtraClaudeTickAsync([new() { Label = "old", Dir = old }, new() { Label = "bad", Dir = bad }], _t0, default);
+
+        Assert.Equal(0, _api.Calls);
+        var cards = agent.Snapshot();
+        Assert.Contains("expired", Assert.Single(cards, p => p.Id == "claude@old").Error);
+        Assert.NotNull(Assert.Single(cards, p => p.Id == "claude@bad").Error);
+        Assert.All(cards.Where(p => p.Id.StartsWith("claude@")), p => Assert.Empty(p.Limits));
+    }
+
+    [Fact]
+    public async Task AnUnreadableSignInFileShowsAnErrorAfterASecondReadAndKeepsTheLastReading()
+    {
+        SignIn("token-1", _t0 + 3_600_000);
+        _api.Respond(HttpStatusCode.OK, Usage);
+        var agent = Agent();
+        await agent.ClaudeTickAsync(_t0, default);
+
+        File.WriteAllText(Creds, """{"claudeAiOauth":{"accessToken":"tok""");
+        await agent.ClaudeTickAsync(_t0 + 3 * Minute, default);
+        Assert.Null(Claude(agent).Error); // once may be Claude Code rewriting the file
+        await agent.ClaudeTickAsync(_t0 + 6 * Minute, default);
+        Assert.Contains("can't be read", Claude(agent).Error);
+        Assert.Equal(42, Claude(agent).Limits.Single().Percent);
+        Assert.Equal(1, _api.Calls);
+
+        SignIn("token-1", _t0 + 3_600_000); // repaired: read again within a minute, and the check goes on
+        await agent.ClaudeTickAsync(_t0 + 7 * Minute, default);
+        Assert.Null(Claude(agent).Error);
+    }
+
+    [Fact]
+    public async Task AnExtraFolderSpelledAnotherWayKeepsItsSchedule()
+    {
+        var work = Directory.CreateDirectory(Path.Combine(_dir, "work")).FullName;
+        File.WriteAllText(Path.Combine(work, ".credentials.json"), SignInJson("token-work", _t0 + 3_600_000));
+        _api.Respond(HttpStatusCode.OK, Usage);
+        var agent = Agent();
+
+        await agent.ExtraClaudeTickAsync([new() { Label = "work", Dir = work }], _t0, default);
+        await agent.ExtraClaudeTickAsync([new() { Label = "work", Dir = Path.Combine(_dir, ".", "work") + Path.DirectorySeparatorChar }], _t0 + Minute, default);
+
+        Assert.Equal(1, _api.Calls);
+    }
+
+    [Fact]
     public async Task AFreshReadingIsNotFetchedAgainWhenTheAgentRestarts()
     {
         SignIn("token-1", _t0 + 3_600_000);
@@ -511,6 +592,86 @@ public sealed class ClaudeQuotaScheduleTests : IDisposable
         Assert.Equal(desktopOnly, QuotaMonitor.PickCredentials(desktopOnly, "not json"));
         Assert.Null(QuotaMonitor.PickCredentials(null, null));
     }
+
+    [Fact]
+    public async Task WithoutASignInOnWindowsTheOneInsideWslIsUsed()
+    {
+        var wsl = Path.Combine(_dir, "wsl-credentials.json");
+        File.WriteAllText(wsl, SignInJson("wsl-token", _t0 + 3_600_000));
+        _api.Respond(HttpStatusCode.OK, Usage);
+        var agent = new QuotaMonitor(NullLogger<QuotaMonitor>.Instance)
+        {
+            ClaudeCachePath = Path.Combine(_dir, "claude-quota.json"),
+            CredentialsPath = Creds, // not written: Claude Code is signed in only inside WSL
+            HttpHandler = _api,
+            FindWslCredentials = () => [wsl],
+        };
+        await agent.ClaudeTickAsync(_t0, default);
+        Assert.Equal("wsl-token", _api.LastToken);
+        Assert.NotEmpty(Claude(agent).Limits);
+    }
+
+    [Fact]
+    public async Task ASignInOnWindowsWinsOverTheOneInsideWsl()
+    {
+        SignIn("windows-token", _t0 + 3_600_000);
+        _api.Respond(HttpStatusCode.OK, Usage);
+        var agent = new QuotaMonitor(NullLogger<QuotaMonitor>.Instance)
+        {
+            ClaudeCachePath = Path.Combine(_dir, "claude-quota.json"),
+            CredentialsPath = Creds,
+            HttpHandler = _api,
+            FindWslCredentials = () => throw new InvalidOperationException("WSL must not be looked at"),
+        };
+        await agent.ClaudeTickAsync(_t0, default);
+        Assert.Equal("windows-token", _api.LastToken);
+    }
+
+    [Fact]
+    public async Task ClaudeDesktopsPlanOnlyFileOnWindowsDoesNotHideTheSignInInsideWsl()
+    {
+        // what Claude Desktop leaves in ~/.claude/.credentials.json: the plan, no Claude Code token
+        File.WriteAllText(Creds, """{"claudeAiOauth":{"subscriptionType":"max","rateLimitTier":"default_claude_max_20x"}}""");
+        var wsl = Path.Combine(_dir, "wsl-credentials.json");
+        File.WriteAllText(wsl, SignInJson("wsl-token", _t0 + 3_600_000));
+        _api.Respond(HttpStatusCode.OK, Usage);
+        var agent = new QuotaMonitor(NullLogger<QuotaMonitor>.Instance)
+        {
+            ClaudeCachePath = Path.Combine(_dir, "claude-quota.json"),
+            CredentialsPath = Creds,
+            HttpHandler = _api,
+            FindWslCredentials = () => [wsl],
+        };
+        await agent.ClaudeTickAsync(_t0, default);
+        Assert.Equal("wsl-token", _api.LastToken);
+    }
+
+    [Fact]
+    public async Task ADistroWithOnlyAPlanIsPassedOverForTheNextOne()
+    {
+        var planOnly = Path.Combine(_dir, "wsl-a.json");
+        File.WriteAllText(planOnly, """{"claudeAiOauth":{"subscriptionType":"pro"}}""");
+        var signedIn = Path.Combine(_dir, "wsl-b.json");
+        File.WriteAllText(signedIn, SignInJson("second-distro", _t0 + 3_600_000));
+        _api.Respond(HttpStatusCode.OK, Usage);
+        var agent = new QuotaMonitor(NullLogger<QuotaMonitor>.Instance)
+        {
+            ClaudeCachePath = Path.Combine(_dir, "claude-quota.json"),
+            CredentialsPath = Creds,
+            HttpHandler = _api,
+            FindWslCredentials = () => [Path.Combine(_dir, "missing.json"), planOnly, signedIn],
+        };
+        await agent.ClaudeTickAsync(_t0, default);
+        Assert.Equal("second-distro", _api.LastToken);
+    }
+
+    [Theory]
+    [InlineData(null, false)]
+    [InlineData("not json", false)]
+    [InlineData("""{"claudeAiOauth":{"subscriptionType":"max"}}""", false)]
+    [InlineData("""{"claudeAiOauth":{"accessToken":""}}""", false)]
+    [InlineData("""{"claudeAiOauth":{"accessToken":"t"}}""", true)]
+    public void ASignInNeedsAnAccessToken(string? json, bool expected) => Assert.Equal(expected, QuotaMonitor.HasCliSignIn(json));
 
     private sealed class FakeAnthropic : HttpMessageHandler
     {

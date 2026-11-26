@@ -18,6 +18,18 @@ public sealed class FeedParserTests
     public void TheLaunchedAddressHasNoRawBracketsAfterTheHost(string link, string expected) =>
         Assert.Equal(expected, FeedParser.LaunchAddress(FeedParser.SafeLink(link)!));
 
+    // #386, #411: explorer.exe opens File Explorer instead of the browser for some addresses (a 473-character one, a short
+    // one with a query string), so the address goes to url.dll instead
+    [Fact]
+    public void ALongArticleAddressIsNotHandedToExplorerOnWindows()
+    {
+        var uri = FeedParser.SafeLink("https://example.com/?q=" + new string('a', 450) + "&x=[1]")!;
+        var psi = FeedMonitor.BrowserStart(uri, windows: true, mac: false);
+        Assert.Equal("rundll32.exe", Path.GetFileName(psi.FileName).ToLowerInvariant());
+        Assert.False(psi.UseShellExecute); // .coderabbit.yaml: ArgumentList only, no shell
+        Assert.Equal(["url.dll,FileProtocolHandler", FeedParser.LaunchAddress(uri)], psi.ArgumentList);
+    }
+
     private static readonly Uri Base = new("https://example.com/blog/feed.xml");
     private static List<FeedItem> Parse(string xml, int max = 50) => FeedParser.Parse(Encoding.UTF8.GetBytes(xml), Base, "k", max);
 

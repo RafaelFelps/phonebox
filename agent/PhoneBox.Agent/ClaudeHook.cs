@@ -19,14 +19,58 @@ public static class ClaudeHook
     public static async Task<object?> HandleAsync(JsonElement input, ConfigStore cfg, ApprovalStore approvals, SessionMonitor sessions, CancellationToken aborted)
         => await HandlePermissionAsync(input, cfg, approvals, sessions, aborted, "Claude Code", "claude:", allowQuestions: true);
 
+    internal static async Task<object?> HandleWorkBuddyAsync(JsonElement input, ConfigStore cfg, ApprovalStore approvals,
+        SessionMonitor sessions, CancellationToken aborted)
+    {
+        var settings = cfg.Get();
+        if (!WorkBuddyHook.Allowed(settings))
+        {
+            approvals.Skipped("WorkBuddy", "No enabled AI sessions widget allows WorkBuddy phone approvals");
+            return null;
+        }
+
+        var answer = await HandlePermissionAsync(input, cfg, approvals, sessions, aborted, "WorkBuddy", "workbuddy:",
+            allowQuestions: true, workBuddy: settings.WorkBuddy);
+        // A widget may be disabled while the phone is deciding.
+        return answer is not null && WorkBuddyHook.Allowed(cfg.Get()) ? answer : null;
+    }
+
     /// <summary>Shared PermissionRequest protocol used by Claude Code, Codex and compatible agents.</summary>
     internal static async Task<object?> HandlePermissionAsync(JsonElement input, ConfigStore cfg, ApprovalStore approvals,
-        SessionMonitor sessions, CancellationToken aborted, string source, string? sessionPrefix, bool allowQuestions)
+        SessionMonitor sessions, CancellationToken aborted, string source, string? sessionPrefix, bool allowQuestions,
+        WorkBuddyConfig? workBuddy = null)
+    {
+        // Claude Code's and Codex's own switches (Ask on the phone, Only when I am away); Cursor checks its own
+        var c = cfg.Get().Claude;
+        if (!(workBuddy?.PhoneApprovals ?? c.PhoneApprovals)) { approvals.Skipped(source, "Ask on the phone is off"); return null; }
+        if ((workBuddy?.OnlyWhenAway ?? c.OnlyWhenAway) && Idle.Seconds() < 60)
+        { approvals.Skipped(source, "the computer is in use (Only when I am away)"); return null; }
+        var decision = await DecideAsync(input, cfg, approvals, sessions, aborted, source, sessionPrefix, allowQuestions, workBuddy?.TimeoutSec);
+        if (decision is null) return null;
+        return new
+        {
+            hookSpecificOutput = new
+            {
+                hookEventName = "PermissionRequest",
+                // "always" (Allow always, an OpenCode answer) has no Claude Code equivalent and allows once like "allow"
+                decision = decision is "allow" or "always"
+                    ? (object)new { behavior = "allow" }
+                    : new { behavior = "deny", message = "Denied from the PhoneBox panel." },
+            },
+        };
+    }
+
+    /// <summary>
+    /// Shows one permission request (in the Claude Code PermissionRequest shape: tool_name, tool_input, cwd,
+    /// session_id) on the phone and waits for it: "allow", "always" or "deny", or null when there is no answer (no
+    /// phone, timed out, or an answer the agent has no use for). Each hook turns that into its own output, and checks
+    /// its own on/off switch before calling this and may override the shared time to answer.
+    /// </summary>
+    internal static async Task<string?> DecideAsync(JsonElement input, ConfigStore cfg, ApprovalStore approvals,
+        SessionMonitor sessions, CancellationToken aborted, string source, string? sessionPrefix, bool allowQuestions, int? timeoutSec = null)
     {
         if (input.ValueKind != JsonValueKind.Object) return null;
         var c = cfg.Get().Claude;
-        if (!c.PhoneApprovals) return null;
-        if (c.OnlyWhenAway && Idle.Seconds() < 60) return null;
 
         var tool = Str(input, "tool_name") ?? "a tool";
         var ti = input.TryGetProperty("tool_input", out var t) && t.ValueKind == JsonValueKind.Object ? t : default;
@@ -39,23 +83,12 @@ public static class ClaudeHook
         var question = allowQuestions && tool == "AskUserQuestion";
         var shownCwd = cwd.Length <= 1000 ? cwd : "…" + cwd[^999..];
         var a = new Approval(ApprovalStore.NewId(), source, sessionId, project, shownCwd, ToolTitle(tool), question ? QuestionDetail(ti) : Detail(tool, ti),
-            ti.ValueKind == JsonValueKind.Object ? Str(ti, "description") : null, now, now + Math.Clamp(c.TimeoutSec, 10, 3600) * 1000L,
+            ti.ValueKind == JsonValueKind.Object ? Str(ti, "description") : null, now, now + Math.Clamp(timeoutSec ?? c.TimeoutSec, 10, 3600) * 1000L,
             question ? "question" : "permission");
 
         var decision = await approvals.AskAsync(a, aborted);
-        // "skip" and an OpenCode-style typed answer ("answer") have no Claude Code equivalent: no decision here
-        if (decision is not ("allow" or "always" or "deny")) return null;
-        return new
-        {
-            hookSpecificOutput = new
-            {
-                hookEventName = "PermissionRequest",
-                // "always" (Allow always, an OpenCode answer) has no Claude Code equivalent and allows once like "allow"
-                decision = decision is "allow" or "always"
-                    ? (object)new { behavior = "allow" }
-                    : new { behavior = "deny", message = "Denied from the PhoneBox panel." },
-            },
-        };
+        // "skip" and an OpenCode-style typed answer ("answer") have no hook equivalent: no decision here
+        return decision is "allow" or "always" or "deny" ? decision : null;
     }
 
     /// <summary>
@@ -137,7 +170,7 @@ public static class ClaudeHook
     private static string HookCommand(int port, string endpoint) =>
         $"{(OperatingSystem.IsWindows() ? "curl.exe" : "curl")} -s --noproxy 127.0.0.1 --max-time 3600 -X POST http://127.0.0.1:{port}{endpoint} -H \"Content-Type: application/json\" --data-binary \"@-\"";
 
-    private static bool IsOurs(JsonNode? hook, string endpoint)
+    internal static bool IsOurs(JsonNode? hook, string endpoint)
     {
         if (hook is not JsonObject obj || obj["command"] is not JsonValue v || !v.TryGetValue<string>(out var cmd))
             return false;
@@ -157,7 +190,30 @@ public static class ClaudeHook
 
     private static bool IsPathChar(char c) => char.IsAsciiLetterOrDigit(c) || c is '-' or '_' or '.' or '/' or '~' or '%';
 
-    public static bool Installed() => Installed(SettingsPath);
+    /// <summary>~/.claude/settings.json and the settings.json of each extra config folder that exists.</summary>
+    internal static List<string> SettingsPaths(IEnumerable<ClaudeCredentialDir>? extra, string? defaultPath = null) =>
+        Targets(extra, defaultPath).Where(t => t.Exists).Select(t => t.Path).ToList();
+
+    /// <summary>A settings.json Install and Remove reach; Label is null for ~/.claude. Shown in the settings before writing.</summary>
+    public sealed record HookTarget(string? Label, string Path, bool Exists, bool Installed);
+
+    /// <summary>~/.claude first, then each extra folder once however it is spelled. A folder that doesn't exist is listed
+    /// but never written: the hook doesn't create it.</summary>
+    internal static List<HookTarget> Targets(IEnumerable<ClaudeCredentialDir>? extra, string? defaultPath = null)
+    {
+        var main = defaultPath ?? SettingsPath;
+        var list = new List<HookTarget> { new(null, main, true, Installed(main)) };
+        var seen = new HashSet<string> { ClaudeCredentialDir.KeyOf(Path.GetDirectoryName(main)!) };
+        foreach (var d in extra ?? [])
+        {
+            if (d.TryKey() is not { } key || !seen.Add(key)) continue;
+            var dir = Path.GetFullPath(d.FullPath());
+            var path = Path.Combine(dir, "settings.json");
+            var exists = Directory.Exists(dir);
+            list.Add(new(d.Label, path, exists, exists && Installed(path)));
+        }
+        return list;
+    }
 
     internal static bool Installed(string path)
         => Installed(path, Endpoint);
@@ -176,8 +232,9 @@ public static class ClaudeHook
     }
 
     /// <summary>Adds (or, with install = false, removes) the PhoneBox hook, keeping everything else and a backup.</summary>
-    public static string? Configure(bool install, int port, int timeoutSec) =>
-        Configure(install, port, timeoutSec, SettingsPath);
+    public static string? Configure(bool install, int port, int timeoutSec, IEnumerable<ClaudeCredentialDir>? extra = null) =>
+        // every file is tried, so one broken settings.json doesn't leave the others without the hook
+        SettingsPaths(extra).Select(p => Configure(install, port, timeoutSec, p)).ToList().FirstOrDefault(e => e is not null);
 
     internal static string? Configure(bool install, int port, int timeoutSec, string path)
         => Configure(install, port, timeoutSec, path, Endpoint);

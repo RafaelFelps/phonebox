@@ -37,6 +37,9 @@ jobs:
           ./gradlew lintDebug assembleDebug testDebugUnitTest --no-daemon --console=plain
       - name: Stream lifecycle regression checks (real Kotlin, gated completion)
         run: python3 tools/test-agent-stream.py
+      # after the Gradle build, like the step above: it compiles with the Kotlin compiler that build cached, on the JDK 17 set up here
+      - name: Phone bridge checks (real Kotlin, BridgeClip and the bridge stream)
+        run: python3 tools/test-bridge-checks.py
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: phonebox-apk
@@ -74,6 +77,7 @@ jobs:
       matrix:
         include:
           - { os: windows-latest, rid: win-x64, tfm: net10.0-windows10.0.19041.0 }
+          - { os: windows-11-arm, rid: win-arm64, tfm: net10.0-windows10.0.19041.0 }
           - { os: ubuntu-latest, rid: linux-x64, tfm: net10.0 }
           - { os: macos-latest, rid: osx-arm64, tfm: net10.0 }
     runs-on: ${{ matrix.os }}
@@ -93,9 +97,10 @@ jobs:
         shell: pwsh
         run: |
           ./tools/test-install-apk.ps1
+          ./tools/test-windows-setup-phone.ps1
           ./tools/test-windows-source-publish.ps1
       - name: Unix installer regression checks with the system Bash
-        if: matrix.rid != 'win-x64'
+        if: runner.os != 'Windows'
         run: |
           python3 tools/test-unix-installer.py --bash /bin/bash
           python3 tools/test-unix-autostart.py /bin/bash
@@ -168,15 +173,24 @@ jobs:
         run: |
           tools/make-macos-dmg.sh dmg "$RUNNER_TEMP/dmg/PhoneBox.app" "$PHONEBOX_VERSION" "$RUNNER_TEMP/PhoneBox.dmg"
           tools/check-macos-dmg.sh "$RUNNER_TEMP/PhoneBox.dmg" out/PhoneBoxAgent "$PHONEBOX_VERSION"
-      - name: Smoke test the single-file agent (Windows)
+      # the installer the release ships (release.yml): built, installed, run, upgraded over and uninstalled
+      - name: Build and test the Windows installer
         if: matrix.rid == 'win-x64'
+        shell: pwsh
+        run: |
+          ./tools/install-inno-setup.ps1
+          $version = ([regex]'<Version>([^<]+)</Version>').Match((Get-Content -Raw agent/PhoneBox.Agent/PhoneBox.Agent.csproj)).Groups[1].Value
+          ./tools/make-windows-installer.ps1 -Exe out/PhoneBoxAgent.exe -Version $version -OutDir "$env:RUNNER_TEMP/installer"
+          ./tools/test-windows-installer.ps1 -Setup "$env:RUNNER_TEMP/installer/PhoneBox-$version-win-x64-setup.exe" -Version $version
+      - name: Smoke test the single-file agent (Windows)
+        if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $version = ([regex]'<Version>([^<]+)</Version>').Match((Get-Content -Raw agent/PhoneBox.Agent/PhoneBox.Agent.csproj)).Groups[1].Value
           python tools/smoke-agent.py out/PhoneBoxAgent.exe --version $version
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
       - name: Smoke test (starts, serves the API)
-        if: matrix.rid != 'win-x64'
+        if: runner.os != 'Windows'
         run: |
           chmod +x out/PhoneBoxAgent
           out/PhoneBoxAgent > agent.log 2>&1 &

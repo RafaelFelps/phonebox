@@ -12,7 +12,7 @@ public sealed record UpdateStatus(string AgentVersion, string? AppVersion, strin
 
 /// <summary>
 /// Keeps the agent and the phone app up to date from GitHub releases (PhoneBox-&lt;v&gt;.apk and
-/// PhoneBoxAgent-&lt;v&gt;-&lt;rid&gt;.zip, rid = win-x64, linux-x64, linux-arm64, osx-arm64 or osx-x64):
+/// PhoneBoxAgent-&lt;v&gt;-&lt;rid&gt;.zip, rid = win-x64, win-arm64, linux-x64, linux-arm64, osx-arm64 or osx-x64):
 ///  - phone: installed with "adb install -r" while the phone is on USB (no prompt on the phone). Android refuses
 ///    an APK signed with a different key, and the agent never uninstalls to force it.
 ///  - agent: files are swapped in place (running files are renamed to *.old, which Windows allows) and the agent
@@ -36,7 +36,7 @@ public sealed class UpdateService(ConfigStore cfg, AdbReverse adb, IHostApplicat
     private volatile string[] _phoneRetry = [];
     private volatile string? _phoneRetryFor;
 
-    /// <summary>Phone app version, reported by the app on every request (X-PhoneBox-App header).</summary>
+    /// <summary>Android app version reported by the Android client.</summary>
     public static volatile string? AppVersion;
 
     public static bool RunningInstalled => SameFolder(AppContext.BaseDirectory, InstallDir);
@@ -79,15 +79,17 @@ public sealed class UpdateService(ConfigStore cfg, AdbReverse adb, IHostApplicat
     [DllImport("libc")] private static extern void free(IntPtr pointer);
 
     /// <summary>A phone whose app update to the latest release failed has not had a successful retry yet.</summary>
-    private bool PhoneRetryPending => _latest?.Version is { } latest && _phoneRetryFor == latest && _phoneRetry.Length > 0;
+    private bool PhoneRetryPending => _latest?.Version is { } latest && _phoneRetryFor == latest
+        && _phoneRetry.Any(cfg.Get().UsesUsbDevice);
 
-    public UpdateStatus Status()
+    public UpdateStatus Status(bool includeAndroid = true)
     {
         var latest = _latest?.Version;
-        var retry = PhoneRetryPending;
-        return new UpdateStatus(AppPaths.Version, AppVersion, latest, _latest?.Url,
+        var appVersion = includeAndroid ? AppVersion : null;
+        return new UpdateStatus(AppPaths.Version, appVersion, latest, _latest?.Url,
             latest is not null && Newer(latest, AppPaths.Version) && (RunningInBundle ? _latest!.AgentDmg : _latest!.AgentZip) is not null,
-            latest is not null && _latest!.Apk is not null && (AppVersion is not null && Newer(latest, AppVersion) || retry),
+            includeAndroid && latest is not null && _latest!.Apk is not null
+                && (appVersion is not null && Newer(latest, appVersion) || PhoneRetryPending),
             _lastCheck, _state, _error);
     }
 
@@ -199,7 +201,7 @@ public sealed class UpdateService(ConfigStore cfg, AdbReverse adb, IHostApplicat
     /// </summary>
     public async Task<string?> InstallAppAsync(CancellationToken ct = default)
     {
-        var targets = adb.MissingApp;
+        var targets = adb.MissingApp.Where(cfg.Get().UsesUsbDevice).ToArray();
         if (targets.Length == 0) return "no connected phone is missing the app";
         if (!await _gate.WaitAsync(0, ct)) return "an update is already running";
         try
@@ -210,10 +212,13 @@ public sealed class UpdateService(ConfigStore cfg, AdbReverse adb, IHostApplicat
             var apk = await VerifiedDownloadAsync(_latest.Apk, $"PhoneBox-{_latest.Version}.apk", ct);
             var adbExe = AdbReverse.FindAdb(cfg.Get().AdbPath) ?? throw new InvalidOperationException("adb not found");
             var failed = new List<string>();
+            var attempted = false;
             foreach (var serial in targets)
             {
                 try
                 {
+                    if (!cfg.Get().UsesUsbDevice(serial)) continue;
+                    attempted = true;
                     var output = await InstallAsync(adbExe, serial, apk, replace: false, ct);
                     if (!output.Contains("Success")) failed.Add($"installing on {serial} failed: {output.Trim().Split('\n').LastOrDefault()}");
                     else log.LogInformation("phone app {Version} installed on {Serial}", _latest.Version, serial);
@@ -223,7 +228,8 @@ public sealed class UpdateService(ConfigStore cfg, AdbReverse adb, IHostApplicat
                     failed.Add($"installing on {serial} failed: {ex.Message}");
                 }
             }
-            return failed.Count > 0 ? string.Join("; ", failed) : null;
+            return failed.Count > 0 ? string.Join("; ", failed)
+                : attempted ? null : "no connected phone is missing the app";
         }
         catch (Exception ex) { return ex.Message; }
         finally
@@ -244,14 +250,19 @@ public sealed class UpdateService(ConfigStore cfg, AdbReverse adb, IHostApplicat
         var connected = adb.Devices.Split(", ", StringSplitOptions.RemoveEmptyEntries);
         var retry = _phoneRetryFor == _latest.Version ? _phoneRetry : [];
         var targets = PhoneTargets(connected, appCurrent, retry);
+        var attempted = new HashSet<string>();
         var failed = new List<(string Serial, string Why)>();
         foreach (var serial in targets)
         {
+            if (!cfg.Get().UsesUsbDevice(serial)) continue;
             string output;
             try
             {
                 // updated another way meanwhile (by hand, or from a store): nothing to install, and no retry left (#353)
-                if (AppCurrentOn(await InstalledDumpAsync(adbExe, serial, ct), _latest.Version))
+                var current = AppCurrentOn(await InstalledDumpAsync(adbExe, serial, ct), _latest.Version);
+                if (!cfg.Get().UsesUsbDevice(serial)) continue;
+                attempted.Add(serial);
+                if (current)
                 {
                     log.LogInformation("phone app on {Serial} is already {Version}", serial, _latest.Version);
                     continue;
@@ -260,6 +271,7 @@ public sealed class UpdateService(ConfigStore cfg, AdbReverse adb, IHostApplicat
             }
             catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
             {
+                attempted.Add(serial);
                 failed.Add((serial, ex.Message)); // a phone that hangs (time limit) must not cost the others their update
                 continue;
             }
@@ -276,11 +288,11 @@ public sealed class UpdateService(ConfigStore cfg, AdbReverse adb, IHostApplicat
                 log.LogInformation("{Serial}: could not open the panel after the update ({Msg})", serial, ex.Message); // updated anyway
             }
         }
-        _phoneRetry = NextPhoneRetry(retry, targets, failed.Select(f => f.Serial).ToArray());
+        _phoneRetry = NextPhoneRetry(retry, attempted.ToArray(), failed.Select(f => f.Serial).Concat(targets.Except(attempted)).ToArray());
         _phoneRetryFor = _latest.Version;
         // a phone that failed keeps the update pending (Status), whatever version the other phones report
         if (failed.Count > 0) throw new InvalidOperationException("phone update failed on " + string.Join("; ", failed.Select(f => $"{f.Serial}: {f.Why}")));
-        if (targets.Length > 0) AppVersion = _latest.Version;
+        if (attempted.Count > 0) AppVersion = _latest.Version;
     }
 
     // Next to PhoneBox.app, so the swap is a rename on one volume.
@@ -395,6 +407,12 @@ public sealed class UpdateService(ConfigStore cfg, AdbReverse adb, IHostApplicat
             var attach = new ProcessStartInfo("/usr/bin/hdiutil");
             foreach (var arg in new[] { "attach", dmg, "-nobrowse", "-readonly", "-noverify", "-mountpoint", mount }) attach.ArgumentList.Add(arg);
             var attached = await ToolProcess.RunAsync(attach, TimeSpan.FromMinutes(2), ct);
+            // "Resource temporarily unavailable" (EAGAIN): the disk image service is busy for a moment; try again
+            for (var retry = 0; retry < 3 && attached.ExitCode != 0 && (attached.Output + attached.Error).Contains("temporarily unavailable", StringComparison.OrdinalIgnoreCase); retry++)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(2), ct);
+                attached = await ToolProcess.RunAsync(attach, TimeSpan.FromMinutes(2), ct);
+            }
             if (attached.ExitCode != 0) throw new InvalidOperationException("could not open the disk image: " + (attached.Output + attached.Error).Trim());
             try
             {
@@ -645,6 +663,7 @@ public sealed class UpdateService(ConfigStore cfg, AdbReverse adb, IHostApplicat
     private async Task<string> InstallAsync(string adbExe, string serial, string apk, bool replace, CancellationToken ct)
     {
         string[] args = replace ? ["-s", serial, "install", "-r"] : ["-s", serial, "install"];
+        using var installing = adb.Installing(); // the USB loop doesn't restart the adb server meanwhile (it would end this)
         var output = await Run(adbExe, [.. args, apk], ct);
         if (!RetryWithoutStreaming(output)) return output;
         log.LogInformation("{Serial}: the streamed install failed ({Why}); trying again without streaming", serial,

@@ -18,6 +18,7 @@ public sealed record AgentSession(string Id, string Tool, string Name, string Pr
 /// Watches running AI coding sessions (local and read-only):
 ///  - Claude Code: ~/.claude/sessions/{pid}.json (status files written by Claude Code itself)
 ///  - Codex: the latest events in recent rollout files under ~/.codex/sessions
+///  - Grok: recent session metadata under ~/.grok/sessions (or GROK_HOME)
 ///  - Cursor (opt-in): recent agent transcripts under ~/.cursor/projects/*/agent-transcripts
 ///  - Antigravity (opt-in): recent user transcripts under ~/.gemini/antigravity/brain and ~/.gemini/antigravity-cli/brain
 ///  - OpenCode: recent sessions from the local HTTP API of its background service (native and in WSL)
@@ -27,13 +28,15 @@ public sealed partial class SessionMonitor(ILogger<SessionMonitor> log, ConfigSt
     private static readonly string Home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
     private readonly ConcurrentDictionary<string, string> _codexCwd = new();
     private readonly ConcurrentDictionary<string, (DateTime LastWrite, long Length, CodexDetails Details)> _codexDetails = new();
-    private volatile IReadOnlyList<AgentSession> _sessions = [];
+    // the rows and the extra Claude Code folder each was read from (session id -> folder), published together so a
+    // conversation is read from the folder that produced its row
+    private sealed record Published(IReadOnlyList<AgentSession> Sessions, IReadOnlyDictionary<string, string> ExtraDirs);
+    private volatile Published _pub = new([], new Dictionary<string, string>());
     private string? _discoveryRoot;
     private long _nextDiscovery;
     private string[] _candidateFiles = [];
-    private string? _cursorDiscoveryRoot;
-    private long _nextCursorDiscovery;
-    private string[] _cursorCandidateFiles = [];
+    // per projects root: the Windows one and, with WSL watching on, each running distro's
+    private readonly ConcurrentDictionary<string, (long Next, string[] Files)> _cursorDiscovery = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, (DateTime LastWrite, long Length, string? Role)> _cursorRoles = new();
     private Dictionary<string, string>? _cursorProjectNames;
     private long _nextCursorProjectMap;
@@ -47,9 +50,20 @@ public sealed partial class SessionMonitor(ILogger<SessionMonitor> log, ConfigSt
     /// also loses the title from its Name — the reader puts the short session id there when titles are off, and the
     /// next monitor refresh (about two seconds) does the same; until then this keeps the title off the phone.
     /// </summary>
-    public IReadOnlyList<AgentSession> Snapshot()
+    public IReadOnlyList<AgentSession> Snapshot() => Shown(_pub.Sessions);
+
+    /// <summary>The sessions (as <see cref="Snapshot"/>) and the extra Claude Code config folder <paramref name="sessionId"/>
+    /// runs from (null for ~/.claude and WSL), both from one published read.</summary>
+    public (IReadOnlyList<AgentSession> Sessions, string? ClaudeDir) ConversationSource(string sessionId)
     {
-        var all = _sessions;
+        var p = _pub;
+        return (Shown(p.Sessions), p.ExtraDirs.GetValueOrDefault(sessionId));
+    }
+
+    private IReadOnlyList<AgentSession> Shown(IReadOnlyList<AgentSession> all)
+    {
+        if (all.Any(s => s.Tool == "workbuddy") && config?.Get().WorkBuddy.Sessions != true)
+            all = all.Where(s => s.Tool != "workbuddy").ToList();
         if (!all.Any(s => s.Title is not null)) return all;
         var claude = ShareTitles;
         var opencode = config?.Get().OpenCode.ShareSessionTitles ?? false;
@@ -67,7 +81,7 @@ public sealed partial class SessionMonitor(ILogger<SessionMonitor> log, ConfigSt
     private bool ShareTitles => config?.Get().Claude.ShareSessionTitles ?? false;
 
     /// <summary>For tests: what the monitor has read, without running its loop.</summary>
-    internal IReadOnlyList<AgentSession> Sessions { set => _sessions = value; }
+    internal IReadOnlyList<AgentSession> Sessions { set => _pub = _pub with { Sessions = value }; }
 
     protected override async Task ExecuteAsync(CancellationToken ct)
     {
@@ -75,7 +89,15 @@ public sealed partial class SessionMonitor(ILogger<SessionMonitor> log, ConfigSt
         {
             var list = new List<AgentSession>();
             try { list.AddRange(ReadClaude(titles: ShareTitles)); } catch (Exception ex) { log.LogDebug("claude sessions: {Msg}", ex.Message); }
+            var (extraRows, extraDirs) = ReadExtraClaude(config?.Get().Claude.ExtraCredentialDirs ?? [], taken: list.Select(s => s.Id).ToList());
+            list.AddRange(extraRows);
             try { list.AddRange(ReadCodex()); } catch (Exception ex) { log.LogDebug("codex sessions: {Msg}", ex.Message); }
+            try { list.AddRange(ReadGrok()); } catch (Exception ex) { log.LogDebug("grok sessions: {Msg}", ex.Message); }
+            if (config?.Get().WorkBuddy.Sessions == true)
+            {
+                try { list.AddRange(ReadWorkBuddy()); }
+                catch (Exception ex) { log.LogDebug("workbuddy sessions: {Kind}", ex.GetType().Name); }
+            }
             // OpenCode sessions are off until Settings › General › "Show OpenCode sessions" is enabled; while off,
             // the service is not read at all — not even the every-2-seconds GET.
             if (config?.Get().OpenCode.Sessions == true)
@@ -102,9 +124,137 @@ public sealed partial class SessionMonitor(ILogger<SessionMonitor> log, ConfigSt
             {
                 ClearAntigravityCache();
             }
-            _sessions = list;
+            // Claude Code and Cursor inside WSL (Windows only; each off until its "Also watch … in WSL" is on)
+            var cfg = config?.Get();
+            try { list.AddRange(ReadWsl(cfg?.Claude.WatchWsl == true, cfg?.Cursor.Sessions == true && cfg.Cursor.WatchWsl)); }
+            catch (Exception ex) { log.LogDebug("wsl sessions: {Msg}", ex.Message); }
+            _pub = new(list, extraDirs);
             ClaudeTranscript.Trim(list.Where(s => s.Tool == "claude").Select(s => s.Id["claude:".Length..]), config?.Get().Claude.ShareConversation ?? false);
             await Task.Delay(2000, ct);
+        }
+    }
+
+    // WSL is read less often than the native folders: a share read is a round trip into the VM, and each round
+    // starts with a `wsl.exe --list --running` query.
+    private const int WslRefreshMs = 5000;
+    private IReadOnlyList<AgentSession> _wslSessions = [];
+    private long _nextWsl;
+    private (bool Claude, bool Cursor) _wslSources;
+    // the distro and home each WSL Claude Code session was read from, for its conversation (session id -> where)
+    private volatile IReadOnlyDictionary<string, (string Distro, string Home)> _wslHomes = new Dictionary<string, (string, string)>();
+
+    /// <summary>The distro and home a Claude Code session's files are under when it runs inside WSL (null for a native
+    /// one), so its conversation is read from the distro.</summary>
+    public (string Distro, string Home)? WslOf(string sessionId) => _wslHomes.TryGetValue(sessionId, out var where) ? where : null;
+
+    /// <summary>The home to read a session's conversation from: null for a native session, and for a WSL session only
+    /// while its distro still runs (asked right before the read, so a distro that stopped since is not started by it).</summary>
+    /// <param name="usable">False for a WSL session whose distro has stopped: nothing may be read for it.</param>
+    /// <summary>Claude Code sessions of the extra config folders (Settings › Claude Code › other accounts). An id in
+    /// <paramref name="taken"/> (already read from ~/.claude) is left out, so its row and its conversation come from one folder. Also returns the folder each row was read from (session id -> folder).</summary>
+    internal (List<AgentSession> Rows, Dictionary<string, string> Dirs) ReadExtraClaude(IReadOnlyList<ClaudeCredentialDir> extra, Func<int, bool>? isAlive = null, IEnumerable<string>? taken = null)
+    {
+        var list = new List<AgentSession>();
+        var dirs = new Dictionary<string, string>();
+        var seen = new HashSet<string>(taken ?? []);
+        foreach (var d in extra)
+        {
+            var dir = d.FullPath();
+            try
+            {
+                foreach (var s in ReadClaude(isAlive: isAlive, titles: ShareTitles, configDir: dir))
+                {
+                    // one source per id: a folder listed twice, or a session copied from another account, shows once
+                    if (!seen.Add(s.Id)) continue;
+                    list.Add(s);
+                    dirs[s.Id] = dir;
+                }
+            }
+            catch (Exception ex) { log.LogDebug("claude sessions ({Label}): {Msg}", d.Label, ex.Message); }
+        }
+        return (list, dirs);
+    }
+
+    public string? ConversationHome(string sessionId, out bool usable, Func<string, bool>? isRunning = null)
+    {
+        usable = true;
+        if (WslOf(sessionId) is not { } where) return null;
+        usable = (isRunning ?? WslHomes.IsRunning)(where.Distro);
+        return usable ? where.Home : null;
+    }
+
+    /// <summary>
+    /// Claude Code sessions and Cursor chats of the running WSL distros' default users, refreshed every
+    /// <see cref="WslRefreshMs"/>. The running-distro query comes right before the reads under its shares, so a
+    /// distro that has stopped is not on the list and is not started by a read.
+    /// </summary>
+    /// <param name="running">The running distros; tests give their own, production asks wsl.exe.</param>
+    internal IReadOnlyList<AgentSession> ReadWsl(bool claude, bool cursor, Func<IReadOnlyList<WslHomes.Entry>>? running = null)
+    {
+        if (!claude && !cursor) { _wslSessions = []; _wslHomes = new Dictionary<string, (string, string)>(); _nextWsl = 0; _wslSources = default; return []; }
+        // a source turned on or off: the rows read with the other setting must not be shown until the next refresh
+        if ((claude, cursor) != _wslSources) { _nextWsl = 0; _wslSources = (claude, cursor); }
+        if (Environment.TickCount64 < _nextWsl) return _wslSessions;
+        _nextWsl = Environment.TickCount64 + WslRefreshMs;
+        var list = new List<AgentSession>();
+        var homes = new Dictionary<string, (string Distro, string Home)>();
+        foreach (var wsl in (running ?? (() => WslHomes.Running()))())
+        {
+            if (claude)
+            {
+                try
+                {
+                    foreach (var s in ReadClaude(wsl.Home, titles: ShareTitles, linuxAlive: (pid, start) => WslHomes.Alive(wsl.Root, pid, start)))
+                    {
+                        list.Add(s);
+                        homes[s.Id] = (wsl.Distro, wsl.Home);
+                    }
+                }
+                catch (Exception ex) { log.LogDebug("claude sessions in {Distro}: {Msg}", wsl.Distro, ex.Message); }
+            }
+            if (cursor)
+            {
+                try { list.AddRange(ReadCursor(Path.Combine(wsl.Home, ".cursor", "projects"))); }
+                catch (Exception ex) { log.LogDebug("cursor sessions in {Distro}: {Msg}", wsl.Distro, ex.Message); }
+            }
+        }
+        _wslHomes = homes;
+        return _wslSessions = list;
+    }
+
+    /// <summary>Reads WorkBuddy's live status files. No transcript or database is opened.</summary>
+    internal static IEnumerable<AgentSession> ReadWorkBuddy(string? homeDir = null, Func<int, bool>? isAlive = null, long? nowMs = null)
+    {
+        var home = homeDir ?? Home;
+        var now = nowMs ?? DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var alive = isAlive ?? Alive;
+        var folder = Path.Combine(home, ".workbuddy", "sessions");
+        if (!Directory.Exists(folder)) yield break;
+        foreach (var file in Directory.EnumerateFiles(folder, "*.json"))
+        {
+            AgentSession? session = null;
+            try
+            {
+                using var doc = JsonDocument.Parse(File.ReadAllText(file));
+                var root = doc.RootElement;
+                if (!root.TryGetProperty("pid", out var id) || !id.TryGetInt32(out var pid) || pid <= 0 || !alive(pid))
+                    continue;
+                if (Str(root, "kind") == "prewarm") continue;
+                var sessionId = Str(root, "sessionId");
+                var cwd = Str(root, "cwd") ?? "";
+                var project = WorkBuddyNames.For(cwd, home) ?? Path.GetFileName(cwd.TrimEnd('\\', '/'));
+                var started = Long(root, "startedAt") ?? 0;
+                var heartbeat = Long(root, "lastHeartbeat") ?? Long(root, "updatedAt") ?? started;
+                var recent = heartbeat > 0 && now >= heartbeat && now - heartbeat < 90_000;
+                session = new AgentSession(
+                    Id: "workbuddy:" + (string.IsNullOrWhiteSpace(sessionId) ? pid.ToString() : sessionId),
+                    Tool: "workbuddy", Name: project, Project: project, Status: recent ? "busy" : "idle",
+                    WaitingFor: null, Since: Long(root, "updatedAt") ?? heartbeat, StartedAt: started, Pid: pid,
+                    Model: Str(root, "model"));
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or InvalidOperationException)
+            { /* The status file can be replaced between poll ticks. */ }
+            if (session is not null) yield return session;
         }
     }
 
@@ -118,11 +268,17 @@ public sealed partial class SessionMonitor(ILogger<SessionMonitor> log, ConfigSt
     internal static bool IsClaudeMemObserver(string cwd) =>
         (cwd.Replace('\\', '/').TrimEnd('/') + "/").Contains("/.claude-mem/observer-sessions/", StringComparison.OrdinalIgnoreCase);
 
-    internal static IEnumerable<AgentSession> ReadClaude(string? homeDir = null, Func<int, bool>? isAlive = null, bool titles = false)
+    /// <param name="linuxAlive">For sessions running inside WSL (<paramref name="homeDir"/> is then the distro user's
+    /// home on the \\wsl.localhost share): whether the Linux process with this PID and start time (the status file's
+    /// procStart, in clock ticks) still runs. Its PIDs mean nothing to Windows, so they are neither checked against
+    /// Windows processes nor handed on (<see cref="AgentSession.Pid"/> stays null).</param>
+    /// <param name="configDir">A Claude Code config folder (CLAUDE_CONFIG_DIR) to read instead of &lt;home&gt;/.claude.</param>
+    internal static IEnumerable<AgentSession> ReadClaude(string? homeDir = null, Func<int, bool>? isAlive = null, bool titles = false,
+        Func<int, long?, bool>? linuxAlive = null, string? configDir = null)
     {
-        var home = homeDir ?? Home;
+        var claudeDir = configDir ?? Path.Combine(homeDir ?? Home, ".claude");
         var aliveCheck = isAlive ?? Alive;
-        var dir = Path.Combine(home, ".claude", "sessions");
+        var dir = Path.Combine(claudeDir, "sessions");
         if (!Directory.Exists(dir)) yield break;
         foreach (var file in Directory.EnumerateFiles(dir, "*.json"))
         {
@@ -132,9 +288,18 @@ public sealed partial class SessionMonitor(ILogger<SessionMonitor> log, ConfigSt
                 using var doc = JsonDocument.Parse(File.ReadAllText(file));
                 var r = doc.RootElement;
                 var pid = r.TryGetProperty("pid", out var p) && p.TryGetInt32(out var pi) ? pi : 0;
-                if (pid == 0 || !aliveCheck(pid)) continue;
-                // a session that was killed leaves its file behind; Windows may give its PID to another program later
-                if (OperatingSystem.IsWindows() && long.TryParse(Str(r, "procStart"), out var procStart) && !SameStart(pid, procStart)) continue;
+                if (pid == 0) continue;
+                var hasStart = long.TryParse(Str(r, "procStart"), out var procStart);
+                if (linuxAlive is not null)
+                {
+                    if (!linuxAlive(pid, hasStart ? procStart : null)) continue;
+                }
+                else
+                {
+                    if (!aliveCheck(pid)) continue;
+                    // a session that was killed leaves its file behind; Windows may give its PID to another program later
+                    if (OperatingSystem.IsWindows() && hasStart && !SameStart(pid, procStart)) continue;
+                }
                 var cwd = Str(r, "cwd") ?? "";
                 var name = Str(r, "name") ?? Path.GetFileName(cwd.TrimEnd('\\', '/'));
                 var project = Path.GetFileName(cwd.TrimEnd('\\', '/'));
@@ -150,8 +315,8 @@ public sealed partial class SessionMonitor(ILogger<SessionMonitor> log, ConfigSt
                     WaitingFor: Str(r, "waitingFor"),
                     Since: Long(r, "statusUpdatedAt") ?? Long(r, "updatedAt") ?? 0,
                     StartedAt: Long(r, "startedAt") ?? 0,
-                    Pid: pid,
-                    Title: titles ? ClaudeTitle(home, r, cwd, name, project) : null);
+                    Pid: linuxAlive is null ? pid : null,
+                    Title: titles ? ClaudeTitle(claudeDir, r, cwd, name, project) : null);
             }
             catch { /* file was being written: retry on the next pass */ }
             if (s is not null) yield return s;
@@ -168,13 +333,13 @@ public sealed partial class SessionMonitor(ILogger<SessionMonitor> log, ConfigSt
     /// transcript at ~/.claude/projects/&lt;folder&gt;/&lt;sessionId&gt;.jsonl. Only the two title records are read: no
     /// prompts, replies or tool arguments. Null while the chat has no title yet.
     /// </summary>
-    internal static string? ReadClaudeTitle(string home, string cwd, string sessionId)
+    internal static string? ReadClaudeTitle(string claudeDir, string cwd, string sessionId)
     {
         try
         {
             // Claude Code names the folder after the working directory with every other character turned into "-"
             var folder = System.Text.RegularExpressions.Regex.Replace(cwd, "[^A-Za-z0-9]", "-");
-            var path = Path.Combine(home, ".claude", "projects", folder, sessionId + ".jsonl");
+            var path = Path.Combine(claudeDir, "projects", folder, sessionId + ".jsonl");
             var info = new FileInfo(path);
             if (!info.Exists) return null;
             TitleCache.TryGetValue(path, out var cached);
@@ -224,10 +389,10 @@ public sealed partial class SessionMonitor(ILogger<SessionMonitor> log, ConfigSt
     /// The chat's title: what the user named it, else the title Claude Code wrote (a derived name in the status file is
     /// only a placeholder such as "develop-int-61"). Null when there is none yet, or it is just the folder name.
     /// </summary>
-    private static string? ClaudeTitle(string home, JsonElement status, string cwd, string name, string project)
+    private static string? ClaudeTitle(string claudeDir, JsonElement status, string cwd, string name, string project)
     {
         var fromName = Str(status, "nameSource") != "derived" && Str(status, "name") is not null;
-        var title = CleanTitle(fromName ? name : Str(status, "sessionId") is { Length: > 0 } id ? ReadClaudeTitle(home, cwd, id) : null);
+        var title = CleanTitle(fromName ? name : Str(status, "sessionId") is { Length: > 0 } id ? ReadClaudeTitle(claudeDir, cwd, id) : null);
         return title is null || title == project ? null : title;
     }
 
@@ -407,20 +572,20 @@ public sealed partial class SessionMonitor(ILogger<SessionMonitor> log, ConfigSt
         var root = projectsRoot ?? Path.Combine(Home, ".cursor", "projects");
         if (!Directory.Exists(root)) yield break;
         var cutoff = DateTime.UtcNow.AddHours(-3);
-        if (_cursorDiscoveryRoot != root || Environment.TickCount64 >= _nextCursorDiscovery)
+        if (!_cursorDiscovery.TryGetValue(root, out var discovered) || Environment.TickCount64 >= discovered.Next)
         {
-            _cursorCandidateFiles = new DirectoryInfo(root).EnumerateFiles("*.jsonl", SearchOption.AllDirectories)
+            var files = new DirectoryInfo(root).EnumerateFiles("*.jsonl", SearchOption.AllDirectories)
                 .Where(f => f.LastWriteTimeUtc > cutoff
                     && f.Directory?.Parent?.Name.Equals("agent-transcripts", StringComparison.OrdinalIgnoreCase) == true
                     && !f.FullName.Replace('\\', '/').Contains("/.agent-data-cleanup-", StringComparison.OrdinalIgnoreCase))
                 .Select(f => f.FullName).ToArray();
-            _cursorDiscoveryRoot = root;
-            _nextCursorDiscovery = Environment.TickCount64 + 30_000;
+            discovered = (Environment.TickCount64 + 30_000, files);
+            _cursorDiscovery[root] = discovered;
         }
 
         var names = CursorProjectNames(workspaceStorageRoot);
         var active = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var path in _cursorCandidateFiles)
+        foreach (var path in discovered.Files)
         {
             AgentSession? s = null;
             try
@@ -455,7 +620,9 @@ public sealed partial class SessionMonitor(ILogger<SessionMonitor> log, ConfigSt
             catch { }
             if (s is not null) yield return s;
         }
-        foreach (var old in _cursorRoles.Keys.Where(p => !active.Contains(p)))
+        // only this root's entries: the other roots' transcripts are read (and kept) by their own calls
+        var prefix = root.TrimEnd('/', '\\');
+        foreach (var old in _cursorRoles.Keys.Where(p => p.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) && !active.Contains(p)))
             _cursorRoles.TryRemove(old, out _);
     }
 
@@ -501,8 +668,13 @@ public sealed partial class SessionMonitor(ILogger<SessionMonitor> log, ConfigSt
                             || folderEl.ValueKind != JsonValueKind.String
                             || folderEl.GetString() is not { Length: > 0 } folder)
                             continue;
-                        if (!Uri.TryCreate(folder, UriKind.Absolute, out var uri)) continue;
-                        var local = uri.IsFile ? uri.LocalPath : folder;
+                        // a folder opened over Remote - WSL (vscode-remote://wsl%2B<distro>/home/...) keeps its
+                        // transcripts inside the distro, under the slug of its Linux path. .NET refuses that
+                        // authority as a host, so the path is cut out by hand.
+                        string local;
+                        if (RemotePath(folder) is { } remote) local = remote;
+                        else if (!Uri.TryCreate(folder, UriKind.Absolute, out var uri)) continue;
+                        else local = uri.IsFile ? uri.LocalPath : folder;
                         if (string.IsNullOrEmpty(local)) continue;
                         var trimmed = local.Replace('\\', '/').TrimEnd('/');
                         var slug = CursorProjectSlug(trimmed);
@@ -517,6 +689,15 @@ public sealed partial class SessionMonitor(ILogger<SessionMonitor> log, ConfigSt
         _cursorProjectNames = map;
         _nextCursorProjectMap = Environment.TickCount64 + 60_000;
         return map;
+    }
+
+    /// <summary>The path of a vscode-remote:// folder URI (unescaped), or null for any other kind of folder.</summary>
+    internal static string? RemotePath(string folder)
+    {
+        const string scheme = "vscode-remote://";
+        if (!folder.StartsWith(scheme, StringComparison.OrdinalIgnoreCase)) return null;
+        var slash = folder.IndexOf('/', scheme.Length);
+        return slash < 0 ? null : Uri.UnescapeDataString(folder[slash..]);
     }
 
     /// <summary>Slug for a workspace folder path; matches Cursor's projects directory name (no drive colon).</summary>

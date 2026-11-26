@@ -29,7 +29,14 @@ Last updated: 2026-11-20 (PhoneBox 0.9.6).
 - **Phone app**: caches (weather, rates, widget state) in its own app storage. The app asks for `INTERNET`,
   `VIBRATE` and `ACCESS_NETWORK_STATE` (only to tell which network is Wi-Fi when the Wake button sends its packet; Android
   grants it without a prompt), and for the microphone (`RECORD_AUDIO`) only when a Dictation widget's button is tapped for
-  the first time.
+  the first time. For the phone bridge's clipboard sharing (off until you turn it on in the app's Phone bridge screen)
+  it also holds `FOREGROUND_SERVICE` and `FOREGROUND_SERVICE_SPECIAL_USE` (a service with a visible notification keeps
+  the connection to your computer), `POST_NOTIFICATIONS` (so that notification can show, asked when you turn the
+  switch on) and `RECEIVE_BOOT_COMPLETED` (to start that service again after a restart; the receiver is switched off,
+  and the app does not start at boot, while the bridge is off). Notification forwarding uses Android's **Notification
+  access**, which you grant in Settings. Android may also ask for **Contacts** so PhoneBox can resolve a caller's
+  number as described below. PhoneBox requests no SMS, call-log or phone-state permission for forwarding and lists
+  launchable apps so you can choose which ones to send.
 - **Computer data shown on the panel** (CPU, GPU, memory, disks, processes, media, volume, AI coding sessions and
   quotas, Docker / Podman, OBS) is read locally and goes only to your phone: over the USB cable (`adb reverse` to
   `127.0.0.1`, with a key only the PhoneBox app has) or, after pairing, over Wi-Fi / Tailscale with a pinned certificate and a key. On Linux, an Intel GPU's
@@ -43,6 +50,13 @@ Last updated: 2026-11-20 (PhoneBox 0.9.6).
   details are open. A step is the tool name plus a file name, the program a command starts with (never the command
   line) or a web host; tool output, thinking and file contents are never sent. Nothing is stored on the phone or the
   computer. With the switch off the agent refuses the request and no prompt or reply text is sent.
+- **Grok sessions** (on, the same as Codex): the agent reads recent metadata under `~/.grok/sessions`
+  (or `GROK_HOME`) and `active_sessions.json`. The phone gets the project folder, status, model, reasoning
+  effort, token counters and times. Prompts, replies, generated titles, turn summaries and costs are not sent.
+  A session shows as working while its turn is still open and a metadata file was written in the last three
+  minutes, and as waiting while that turn is sitting on a permission prompt and the Grok process is still
+  running. Sessions with nothing written in the last three hours are skipped. This stays on this computer
+  except for the same local USB / paired Wi-Fi link as the rest of the panel.
 - **Cursor sessions** (off by default; **Settings › General › Cursor sessions**): while enabled, the agent scans recent
   `*.jsonl` files under `~/.cursor/projects/*/agent-transcripts` (about every 30 seconds for discovery) and reads a
   bounded tail of each file to parse the last record's `role` in memory. Only that role and the file times are kept for
@@ -80,6 +94,55 @@ Last updated: 2026-11-20 (PhoneBox 0.9.6).
   often draws from your first prompt. The agent reads only the title records at the end of the chat's file in
   `~/.claude/projects`, never the prompts, replies or tool arguments, and sends the title only to your phone, like the
   rest of this list. With the switch off the file is not opened and no title is sent.
+- **Clipboard sharing, the phone bridge** (macOS only, off by default; **Settings › Phone bridge**): while it is on,
+  the agent looks at the clipboard's change counter about every 400 ms and, when you copy plain text (up to 64 KiB),
+  sends it over the same USB / paired Wi-Fi link as other panel data. This assumes that users and software with access
+  to the local agent API are trusted. Text a phone sends is put on this computer's clipboard. The agent skips copies
+  when it detects concealed, transient or auto-generated markers. Password managers can omit or add markers after the
+  clipboard has been read. Turn off sharing before copying sensitive text. The text is held in memory
+  only: the last 20 copies are kept so a phone that reconnects within two minutes gets what it missed, and they are
+  forgotten when the setting is turned off. It is never written to disk, `data.json` or the log (the log records no
+  clipboard text), and it goes nowhere except your own phones. Turning the setting off stops both directions at once.
+  If macOS denies PhoneBox the clipboard (its paste permission in Privacy & Security), nothing is read or sent, and the
+  settings card says so.
+  On the phone the app puts the text you copied on the computer onto the phone's clipboard, and
+  reads the phone's clipboard only when you ask it to (Send to Mac in the text-selection menu, the Share sheet, a
+  Quick Settings tile or a button on the service's notification); it never sends a clip Android marks as sensitive.
+  Text that another app hands to Send to Mac (the selection menu, the Share sheet) is shown first and sent only when
+  you tap **Send to Mac**. To pick up again after a dropped connection, the phone keeps the number of the last
+  clipboard event in memory (not the text) and sends it when it reconnects. **On Android 9 and older, every app on the
+  phone can read the clipboard at any time**, not only the app in front: there, text you copy on the Mac is readable
+  by all apps installed on the phone. Android 10 and later let only the app in front (and the keyboard) read it.
+- **Phone notifications on the computer, the phone bridge** (macOS only, off by default; **Settings › Phone bridge ›
+  Show phone notifications on this Mac**): while it is on, the agent shows the call, message and app notifications your
+  phone sends it, as ordinary macOS notifications: the app's name, the title (who is calling or who wrote) and the text. Only the apps you allow on the phone are sent, and only to this computer over the same USB / paired Wi-Fi
+  link as other panel data. macOS shows them with the PhoneBox icon and the phone app's icon as the picture
+  when the agent can build its small notifier program (PhoneBox.app, in the agent's folder: built on this Mac from source
+  inside the agent with Apple's Swift compiler when Xcode or the command line tools are installed, nothing is downloaded,
+  and macOS asks once whether PhoneBox may show notifications). The agent keeps the app icons in memory only and forgets
+  them within half a minute of the setting being turned off; to attach one, the notifier writes it to a temporary file, which macOS moves into
+  its own notification store and keeps with the notification (a file macOS does not take is deleted). Otherwise they appear
+  under Script Editor's name, which is how a program without its own app shows a notification. macOS keeps them in
+  Notification Center like any other. The agent does not store them or
+  write their text to its log (the log never holds their words). With **Copy one-time codes from
+  messages** also on, a login code the agent finds in a message is put on this computer's clipboard, and is not sent on
+  to your phones. Turning the setting off stops all of it at once, also
+  for notifications that were waiting to be shown.
+- **Phone notifications, on the phone side of the phone bridge** (off by default; the app's **Phone bridge** screen › Show
+  notifications on the Mac, plus Android's Notification access): the app reads the notifications of the apps you switched
+  on (their name, title, text and kind; for a call, who is calling) and sends them only to your paired computer over the
+  same USB / paired Wi-Fi link, together with the posting app's icon (a small PNG, so the computer can show it as the
+  notification's picture). The **All apps** switch on the Phone bridge screen (off until you turn it on) sends every app's
+  notifications instead of the list, which includes banking, security and other private ones. Opening the Phone bridge
+  screen while forwarding is on can prompt once for **Contacts**. With permission, PhoneBox can look up the number shown
+  in a Samsung in-call UI notification and use a matching contact name as its title. Selecting the default dialer also
+  allows Samsung's in-call UI call notifications because that app posts calls for the dialer. Its incoming and outgoing
+  calls use the same format, so either can be forwarded. If PhoneBox learns the name later for a Samsung call, it sends
+  an update with the title, text, app metadata and icon when available. PhoneBox always excludes its own notifications
+  and ongoing media. The app holds up to 20 unsent notifications in memory. At the next delivery attempt, it discards
+  entries at least two minutes old. Notification contents stay out of the phone's log and storage. If you enable
+  `PhoneBoxBridge` debug logging with adb, the phone can log app package names and call flags, including for skipped calls.
+  Until you turn the switch on, the app does not even appear in Android's Notification access list.
 - **Sound for the Spectrum bars widget** (Windows): while an enabled page with the widget is on the phone's screen,
   the agent captures what the default output device plays, analyzes it in memory and sends only 48 loudness levels
   per frame to the phone. Audio is never stored or sent; capture stops a few seconds after the widget leaves the
@@ -92,7 +155,7 @@ Last updated: 2026-11-20 (PhoneBox 0.9.6).
   presses a key (moving between desktops or pages). While you gesture, the agent reads the Mac's Trackpad, `com.apple.dock`
   and `com.apple.symbolichotkeys` preferences (at most once every 2 seconds) to do what your own trackpad would do. Only
   the gesture settings are kept, in memory, and nothing is stored or sent.
-- **Local services**: LibreHardwareMonitor's web server (`127.0.0.1:8085`), a running Antigravity language server
+- **Local services**: LibreHardwareMonitor's web server (`127.0.0.1`, port 8085 by default), a running Antigravity language server
   (loopback, over HTTP or HTTPS), the Docker / Podman socket, OBS WebSocket and the Discord desktop app's local connection (a named pipe
   or socket on this computer) are local connections.
 
@@ -100,30 +163,46 @@ Last updated: 2026-11-20 (PhoneBox 0.9.6).
 remove the agent together with its settings, pushed data and log (without the switch, settings are kept). Uninstalling
 the Android app removes everything on the phone.
 
+The Water intake widget stores the current local day's total and the next reminder in panel storage on that device.
+It sends no intake data to the desktop agent or an external service.
+
+WorkBuddy sessions and phone approvals are off by default. When enabled, WorkBuddy session cards use local status files and
+workspace names. When an enabled AI sessions widget allows WorkBuddy phone approvals, the hook sends pending
+prompt details (session ID, workspace, working directory, tool, action details and any description) to the local
+agent. The paired phone receives the prompt and replies over USB or pinned TLS over Wi-Fi. Turn off **Ask on
+the phone** in WorkBuddy's settings section, disable the widget's approval option or remove the hook to stop it.
+
 ## Connections made by default
 
 Each of these servers sees your IP address, like any web request. PhoneBox sends none of them an identifier for you
-or your devices, with one exception: the update check can retry with your GitHub CLI token (see below), which
-identifies your GitHub account to GitHub.
+or your devices, with these exceptions: the update check can retry with your GitHub CLI token (see below), which
+identifies your GitHub account to GitHub, and the Claude quota check sends the Claude Code sign-in token, which
+identifies your account, to Anthropic only. The Grok quota check (below) does the same for Grok, but only while a page
+shows it.
 
 | What | Where | What is sent | How to turn it off |
 |---|---|---|---|
 | Update check | `api.github.com` (release info), `github.com` (downloads) | The repository name; with `gh` signed in and only when GitHub turns away an anonymous request, your GitHub CLI token, to `api.github.com` only | **Settings › General › Updates › Install new releases automatically** turns off installing. The check every 6 hours stays; it sends nothing about you |
+| Phone mic setup (Windows) | `github.com` (the scrcpy 5.0.1 release, `Genymobile/scrcpy`), which redirects the download to `release-assets.githubusercontent.com` | The request itself; nothing about you. Only when you press **Settings › General › Phone mic › Set up** and no official scrcpy-server 5.0.1 is found on this computer; the file is kept only if its SHA-256 matches the official release. The phone's audio itself never leaves this computer and its phone: it goes over the phone's adb connection to the agent (USB; over your own network only if you connected adb over Wi-Fi yourself) and into a playback device. Muting only silences it on the computer: while the phone mic is on, the phone keeps recording; turn the mic off to stop that | Don't press Set up, or put the file next to the settings file yourself |
 | Network latency (ping metric, "ping high" rule) | `1.1.1.1` (Cloudflare DNS) by default, an ICMP echo every 5 seconds | An empty ping packet | From 0.9.6: empty **Settings › General › Ping**, or enter another host. 0.9.5 and earlier: not switchable; block ICMP to `1.1.1.1` in your firewall |
 | Weather (phone) | `api.open-meteo.com`, every 15 minutes | The coordinates of the city you chose (Tallinn by default), and the forecast model when one is picked in **Settings › General › Weather** | From 0.9.6: asked only while a page has a widget that shows the weather (weather, forecast, sun & moon, a clock with its weather line, or a Custom HTML widget, which gets the weather too); remove those, or turn off the clock's weather line. 0.9.5 and earlier: asked while the panel runs; choose a city you are comfortable sharing in **Settings › General › Weather** |
 | Air quality widget (phone) | `air-quality-api.open-meteo.com`, while the widget is on a page | The same coordinates | Remove the widget |
 | City search (settings page) | `geocoding-api.open-meteo.com` | The city name you type, only when you search | Don't search |
-| Claude quota | `api.anthropic.com/api/oauth/usage`, every 3 minutes after a successful check (sooner after a failed one, as often as every 30 seconds while the network is down; less often when Anthropic asks it to wait; agents running on this computer share one schedule) while Claude Code is signed in on this computer, whether or not a page shows a quota widget | The OAuth token Claude Code stores in `~/.claude/.credentials.json`, or on macOS, when that file doesn't exist, the "Claude Code-credentials" item from the default keychain search list (normally the login Keychain), read with `security find-generic-password`; read-only, PhoneBox never refreshes it. Only the Claude Code command-line sign-in is used; the Claude Desktop app's own sign-in is never read | No switch yet: it stops when Claude Code is signed out on this computer |
+| Claude quota | `api.anthropic.com/api/oauth/usage`, every 3 minutes after a successful check (sooner after a failed one, as often as every 30 seconds while the network is down; less often when Anthropic asks it to wait; agents running on this computer share one schedule) while Claude Code is signed in on this computer, whether or not a page shows a quota widget | The OAuth token Claude Code stores in `~/.claude/.credentials.json`, or on macOS, when that file doesn't exist, the "Claude Code-credentials" item from the default keychain search list (normally the login Keychain), read with `security find-generic-password`; read-only, PhoneBox never refreshes it. Only the Claude Code command-line sign-in is used; the Claude Desktop app's own sign-in is never read. Each folder listed under Settings › General › Claude Code › other accounts (`claude.extraCredentialDirs`) is a token source too: the token in its `.credentials.json` is sent in a request of its own, on a schedule of its own (only that file is read, never the Keychain); the phone sees only the label you gave it | No switch yet for the default sign-in: it stops when Claude Code is signed out on this computer. An extra account keeps being checked whether or not the default one is signed in; removing its row in Settings stops the checks for that folder |
 
 ## Connections made only when you use a feature
 
 | Feature | Where | What is sent |
 |---|---|---|
-| Codex live quota (opt-in) | Off by default until turned on in **Settings › General › AI quotas & CodexBar › Read live Codex quotas with the Codex CLI**, and only while an enabled page shows Codex quotas and fresh CodexBar data is not already active. Runs the local `codex` CLI (`codex app-server`), which contacts its configured OpenAI/ChatGPT endpoints (by default `chatgpt.com` / `api.openai.com`) about every 3 minutes, backing off up to 30 minutes on failure. Turn off by unchecking **Read live Codex quotas with the Codex CLI** | PhoneBox sends only `initialize` metadata and `account/rateLimits/read` over local stdio (no prompt or thread) and never reads or logs credentials; the Codex CLI uses its own sign-in and may refresh and rewrite `~/.codex/auth.json` |
-| Discord widget | `discord.com/api/oauth2/token`, once at login and when the token needs renewing; `cdn.discordapp.com`, once per server icon and avatar shown (the agent fetches them, the phone never contacts Discord; the rest goes through the Discord app on this PC, locally). Turn off in **Settings › General › Discord** | The application's client ID and secret, and the one-time login code or the saved refresh token; for images only the image's id and hash, which Discord already knows. For favourite servers and channels the names and avatars of the people in voice channels you are not in reach the phone too (read from the Discord app on this PC, kept in memory only). With screen share on (off by default) and a Discord widget's **Control** on, the names of the apps with a window on this PC (Windows only) with their process IDs, and the name of what you share, go to the phone while its share view is open, and the phone sends back the process ID of the app you pick; no game list is fetched. With the read-only chat on (off by default), these reach the phone, read from the Discord app on this PC: the text of the messages in the channel shown and the names and avatars of their authors, the names of your servers and their text channels, and, in a direct or group call, the messages of that conversation. All of it is kept in memory only, never in a file or the log |
+| iPhone USB connection | The local usbmuxd service (`127.0.0.1:27015` on Windows, `/var/run/usbmuxd` or `/run/usbmuxd` on macOS and Linux), while the agent’s Wi-Fi & Tailscale listener is enabled. Turn it off in the agent settings and restart the agent to stop connections | Device discovery and a connection request for a USB device’s local relay. The response to the iPhone’s fresh challenge uses the existing pairing key. The service relays encrypted HTTPS between the agent and the paired iPhone |
+| Grok quota | Only while an enabled page shows Grok quotas (a Quotas or CodexBar widget, or a Clock with its status line, whose providers include Grok, or a Quota ring set to Grok) and the Grok CLI is signed in on this computer. `cli-chat-proxy.grok.com/v1/billing?format=credits` every 3 minutes after a successful check (sooner after a failed one, as often as every 30 seconds while the network is down; later when Grok asks it to wait), and `cli-chat-proxy.grok.com/v1/settings` for the plan name at most every 6 hours (that request gives up after 2 seconds). Remove those widgets, or take Grok out of their providers, to stop the requests | The bearer token the Grok CLI stores in `~/.grok/auth.json` (`GROK_HOME` overrides that folder); read-only, PhoneBox never refreshes it, never logs it and never sends it to the phone |
+| Codex live quota (opt-in) | Off by default until turned on in **Settings › General › AI quotas & CodexBar › Read live Codex quotas with the Codex CLI**, and only while Codex is selected in the provider list and fresh CodexBar data is unavailable. This also serves custom widgets that read the quota API. Runs the local `codex` CLI (`codex app-server`), which contacts its configured OpenAI/ChatGPT endpoints (by default `chatgpt.com` / `api.openai.com`) about every 3 minutes, backing off up to 30 minutes on failure. Turn off by unchecking **Read live Codex quotas with the Codex CLI** | PhoneBox sends only `initialize` metadata and `account/rateLimits/read` over local stdio (no prompt or thread) and never reads or logs credentials; the Codex CLI uses its own sign-in and may refresh and rewrite `~/.codex/auth.json` |
+| Discord widget | `discord.com/api/oauth2/token`, once at login and when the token needs renewing; `cdn.discordapp.com`, once per server icon and avatar shown (the agent fetches them, the phone never contacts Discord; the rest goes through the Discord app on this PC, locally). Turn off in **Settings › General › Discord** | The application's client ID and secret, and the one-time login code or the saved refresh token; for images only the image's id and hash, which Discord already knows. For favourite servers and channels the names and avatars of the people in voice channels you are not in reach the phone too (read from the Discord app on this PC, kept in memory only). With screen share on (off by default) and a Discord widget's **Control** on, the names of the apps with a window on this PC (Windows only) with their process IDs, and the name of what you share, go to the phone while its share view is open, and the phone sends back the process ID of the app you pick (the name of what you share goes with that view only). The current-channel bar's own **Control** gets only whether you share, for its Live badge and Stop button, never the app list or the name; no game list is fetched. With the read-only chat on (off by default), these reach the phone, read from the Discord app on this PC: the text of the messages in the channel shown and the names and avatars of their authors, the names of your servers and their text channels, and, in a direct or group call, the messages of that conversation. All of it is kept in memory only, never in a file or the log |
 | Steam friends and activity | `api.steampowered.com`, only while Steam is enabled and an enabled page contains either widget. Clear the API key, turn off Steam, or remove both widgets to stop requests | The API key in the request header; your SteamID64 for the friend-list request; your custom profile name as `vanityurl` only when you save it; and friend SteamIDs in player-summary batches. Steam returns names, avatars, presence and public game details. The activity list is built from successive polls and stays in memory only |
 | Steam avatars | `*.steamstatic.com` and `steamcdn-a.akamaihd.net`, only when the agent fetches an avatar shown by either widget. Clear the API key, turn off Steam, or remove both widgets to stop requests | A request to the avatar URL Steam returned (including its image hash); the Web API key and SteamID64 are not sent to these image hosts |
 | Synced lyrics widget | `lrclib.net` (LRCLIB, free and open, no account), off until you turn on a Synced lyrics widget's **Look up lyrics on LRCLIB** (per widget). Then asked by the agent when a song starts, only for a widget on an enabled page with the option on; the phone never contacts it. The exact lookup sends the title, artist, album and length; when it finds nothing (or the song is longer than an hour), a search sends the title and artist only. A song is asked again only once its answer has expired or was dropped from the 100. Answers are kept in memory only, never on disk: an answer is reused for 6 hours for a song that was found and 30 minutes for one that was not, at most 100 songs; an expired answer is dropped the next time any widget asks for lyrics, and all of them when the agent stops; after a failure nothing is asked for a while (1 minute, doubling up to 30, or as long as LRCLIB's Retry-After asks). Turn the option off or remove the widget to stop the requests | The title, artist, album and length of the track playing on this computer, and a `PhoneBox/<version> (+https://github.com/ersinkoc/phonebox)` user agent; nothing about you |
+| Stocks widget (phone) | `qt.gtimg.cn` (Tencent), and `proxy.finance.qq.com` for intraday charts. The agent requests data over HTTPS for the saved watchlist when a Stocks widget on an enabled page asks for it. Remove the widget to stop the requests | The watchlist codes you chose (e.g. `sh000001`); nothing about you |
+| Stock forum widget (phone) | `guba.eastmoney.com` and `gbapi.eastmoney.com` (East Money), only while an enabled page shows a Stock forum widget; the agent requests the configured code over HTTPS, caching successful answers for ten minutes and failures for five minutes. Remove the widget to stop the requests | The stock code of the forum (a 6-digit code you chose); nothing about you |
 | GitHub widget | `api.github.com`, through your own GitHub CLI (`gh`) | Whatever `gh` sends with its own sign-in |
 | Hacker News widget (phone) | `hacker-news.firebaseio.com` | Nothing but the request |
 | Exchange rates widget (phone) | `api.frankfurter.dev` | The currencies you chose |

@@ -4,6 +4,8 @@
 
   // Only use the phone with this serial number (null = every connected Android device)
   "deviceSerial": null,
+  "ignoredDeviceSerials": [],
+  "libreHardwareMonitorPort": 8085,
   // Path to adb.exe (null = searched in PATH, the Android SDK and winget locations)
   "adbPath": null,
 
@@ -12,15 +14,22 @@
 
   // Claude Code chats in the sessions widget. Both are off, because they come from your prompts: "shareSessionTitles" shows each
   // chat's title on the phone (without it only the folder name is shown and no title is read); "shareConversation" lets the phone
-  // open a session's recent messages and steps (nothing is read from a chat file and nothing is sent).
-  "claude": { "shareSessionTitles": false, "shareConversation": false },
+  // open a session's recent messages and steps (nothing is read from a chat file and nothing is sent). Windows: "watchWsl" also shows the sessions
+  // of Claude Code inside the running WSL distros, and uses its sign-in there for the quota when Windows has none (off by default).
+  "claude": { "shareSessionTitles": false, "shareConversation": false, "watchWsl": false, "extraCredentialDirs": [] },
+
+  // Phone bridge (macOS): all off, because they move what you copy and the text of your messages between this computer and the
+  // paired phone; the PhoneBox app has its own switch too, and both must be on. "clipboard" shares copied text both ways;
+  // "notifications" shows the phone's call, message and app notifications here; "copyCodes" (needs "notifications") puts a
+  // one-time code from a message on the clipboard.
+  "bridge": { "clipboard": false, "notifications": false, "copyCodes": false },
 
   // Ping target for the ping metric and the "ping high" rule, every 5 s (empty = off)
   "ping": { "host": "1.1.1.1", "adapters": [] },
   // Discord widget: talks to the Discord desktop app on this computer. Create an application at discord.com/developers/applications, add the redirect http://127.0.0.1, and enter its client ID and secret (see docs/DISCORD.md). "allowControl" lets shortcuts and custom widgets mute, deafen, leave and join without a Discord widget (off by default). screenShare (off by default) lets the phone start and stop screen shares; it asks Discord for the rpc.screenshare scopes, so Discord asks you to approve PhoneBox again
   "discord": { "enabled": false, "clientId": null, "clientSecret": null, "allowControl": false, "screenShare": false, "chat": false },
-  // Cursor agent chats on the AI sessions widget (off by default)
-  "cursor": { "sessions": false },
+  // Cursor agent chats on the AI sessions widget (off by default). Windows: "watchWsl" also reads the chats of projects opened over Remote - WSL, in the running distros (off by default). "phoneApprovals" sends the commands and MCP tool calls of the Cursor agent to the phone for Allow / Deny (needs the hook from Settings › General; off by default)
+  "cursor": { "sessions": false, "watchWsl": false, "phoneApprovals": false },
   // Antigravity chats on the AI sessions widget (off by default)
   "antigravity": { "sessions": false, "shareSessionTitles": false },
   // Live Codex quotas read through the Codex CLI (off by default; Settings › General › AI quotas & CodexBar)
@@ -29,8 +38,14 @@
   // background service on 127.0.0.1. Off by default: set "phoneApprovals": true (or Settings › General) to let
   // the phone answer. "shareSessionTitles" puts the session titles on the phone too.
   "opencode": { "phoneApprovals": false, "sessions": false, "timeoutSec": 90, "alwaysCountdownSec": 10, "watchWsl": false, "shareSessionTitles": false },
+  "stocks": [],
+  "workBuddy": { "sessions": false, "phoneApprovals": false, "onlyWhenAway": false, "timeoutSec": 90 },
   // App console widget (Windows): keys and dial bindings per app, matched by the focused window's process name
   "console": { "profiles": [] },
+  // Phone mic (Windows, off by default): the phone's microphone played into a virtual cable ("endpoint", e.g. VB-CABLE's CABLE Input),
+  // so apps pick the cable's other end as their microphone. Settings › General › Phone mic › Set up turns it on and fetches
+  // scrcpy-server 5.0.1 from GitHub if it is missing ("serverPath": null = the copy next to this file)
+  "phoneMic": { "enabled": false, "source": "mic-camcorder", "endpoint": "CABLE Input", "latencyMs": 50, "maxBufferMs": 150, "gain": 1, "serverPath": null, "startMuted": false },
   // Steam friends widget: enter your SteamID64 and a user Web API key in Settings › General (see docs/STEAM.md)
   "steam": { "enabled": false, "steamId": null, "apiKey": null },
 
@@ -39,7 +54,7 @@
 
   // Clock seconds, return to the first page after N idle seconds (0 = never), vibrate on session events, a message when a session finishes,
   // switch pages with the phone's volume keys
-  "display": { "showSeconds": true, "idleReturnSec": 90, "vibrate": true, "finishToast": true, "volumeKeys": true, "pixelShift": false, "controlsTop": false, "pageBar": "dots", "pageBarSide": "bottom", "idleDimMin": 0, "nightWhenUnreachable": false, "unreachableNightDelayMin": 5, "language": "auto" },
+  "display": { "showSeconds": true, "weekStart": "monday", "idleReturnSec": 90, "vibrate": true, "finishToast": true, "finishSound": false, "approvalSound": false, "finishSoundVolume": 70, "volumeKeys": true, "pixelShift": false, "controlsTop": false, "tabletRows": false, "pageBar": "dots", "pageBarSide": "bottom", "idleDimMin": 0, "nightWhenUnreachable": false, "unreachableNightDelayMin": 5, "wakeOnUnlock": false, "lockPhoneWithShortcut": false, "language": "auto", "wallpaper": { "dim": 45, "blur": 0 }, "standby": "off", "standbyGraceSec": 30 },
 
   // Plex music control (Caldera Amp or another Plex Companion player): the server address and token, and the player address.
   // None of these go to the phone; the token is sent only to the server, never to the player.

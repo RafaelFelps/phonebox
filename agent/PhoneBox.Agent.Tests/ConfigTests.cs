@@ -31,6 +31,71 @@ public class ConfigTests
         finally { File.Delete(path); }
     }
 
+    [Theory]
+    [InlineData("{}", 8085)]
+    [InlineData("""{"libreHardwareMonitorPort": 18085}""", 18085)]
+    [InlineData("""{"libreHardwareMonitorPort": 1}""", 1)]
+    [InlineData("""{"libreHardwareMonitorPort": 65535}""", 65535)]
+    [InlineData("""{"libreHardwareMonitorPort": 0}""", 8085)]
+    [InlineData("""{"libreHardwareMonitorPort": 65536}""", 8085)]
+    public void LibreHardwareMonitorUsesTheDesktopPortOnLoopback(string json, int expectedPort)
+    {
+        var config = Load(json);
+        Assert.Equal(expectedPort, config.LibreHardwareMonitorPort);
+        Assert.Equal($"http://127.0.0.1:{expectedPort}/data.json", SystemMonitor.LhmDataUrl(config.LibreHardwareMonitorPort));
+        var publicConfig = JsonSerializer.SerializeToElement(config.ToPublic(), ConfigStore.WriteOpts);
+        Assert.False(publicConfig.TryGetProperty("libreHardwareMonitorPort", out _));
+    }
+
+    [Fact]
+    public void ExtraClaudeCredentialDirsDropBlankAndRepeatedEntries()
+    {
+        var c = Load("""{"claude":{"extraCredentialDirs":[{"label":" work ","dir":" ~/.claude-work "},{"label":"","dir":"/x"},{"label":"y","dir":""},{"label":"again","dir":"~/.claude-work/"},{"label":"relative","dir":"claude-x"},{"label":"default","dir":"~/.claude"},null]}}""");
+        var d = Assert.Single(c.Claude.ExtraCredentialDirs);
+        Assert.Equal("work", d.Label);
+        Assert.Equal("~/.claude-work", d.Dir);
+        Assert.Empty(Load("{}").Claude.ExtraCredentialDirs);
+    }
+
+    [Fact]
+    public void ExtraClaudeLabelsAreUniqueAndShortBecauseTheyMakeTheCardId()
+    {
+        string Dir(string name) => Path.Combine(Path.GetTempPath(), name); // fully qualified on every platform
+        var c = Load(JsonSerializer.Serialize(new { claude = new { extraCredentialDirs = new[]
+        {
+            new { label = "Work", dir = Dir("a") }, new { label = " work ", dir = Dir("b") },
+            new { label = "a-label-longer-than-twenty", dir = Dir("c") }, new { label = "home", dir = Dir("d") },
+        } } }));
+        Assert.Equal(["Work", "home"], c.Claude.ExtraCredentialDirs.Select(d => d.Label));
+    }
+
+    [Fact]
+    public void ExtraClaudeFoldersAreComparedByTheirFullPath()
+    {
+        var work = Path.Combine(Path.GetTempPath(), "claude-work");
+        var c = Load(JsonSerializer.Serialize(new { claude = new { extraCredentialDirs = new[]
+        {
+            new { label = "work", dir = work },
+            new { label = "dots", dir = Path.Combine(Path.GetTempPath(), "x", "..", "claude-work") },
+            new { label = "here", dir = Path.Combine(Path.GetTempPath(), ".", "claude-work") + Path.DirectorySeparatorChar },
+            new { label = "home", dir = "~/x/../.claude" },
+            new { label = "dot", dir = "~/./.claude" },
+        } } }));
+        Assert.Equal("work", Assert.Single(c.Claude.ExtraCredentialDirs).Label);
+    }
+
+    [Fact]
+    public void AnExtraClaudeFolderThatCantBeMadeFullIsDroppedAndTheRestIsKept()
+    {
+        var c = Load(JsonSerializer.Serialize(new { claude = new { extraCredentialDirs = new[]
+        {
+            // throws in GetFullPath on every platform, like a path past the Windows length limit does there
+            new { label = "nul", dir = Path.Combine(Path.GetTempPath(), "a\0b") },
+            new { label = "work", dir = Path.Combine(Path.GetTempPath(), "claude-work") },
+        } } }));
+        Assert.Equal("work", Assert.Single(c.Claude.ExtraCredentialDirs).Label);
+    }
+
     [Fact]
     public void EmptyConfigGetsTheDefaultPagesAndFreshTokens()
     {
@@ -102,6 +167,46 @@ public class ConfigTests
         Assert.Equal(30, Load("""{ "display": { "nightWhenUnreachable": true, "unreachableNightDelayMin": 999 } }""").Display.UnreachableNightDelayMin);
         Assert.Equal(1, Load("""{ "display": { "nightWhenUnreachable": true, "unreachableNightDelayMin": -5 } }""").Display.UnreachableNightDelayMin);
         Assert.True(Load("""{ "display": { "nightWhenUnreachable": true } }""").Display.NightWhenUnreachable);
+    }
+
+    [Fact]
+    public void DisplayFinishSoundVolumeDefaultsAndRange()
+    {
+        var defaults = Load("{}").Display;
+        Assert.False(defaults.FinishSound);
+        Assert.Equal(70, defaults.FinishSoundVolume);
+        Assert.Equal(100, Load("""{ "display": { "finishSoundVolume": 999 } }""").Display.FinishSoundVolume);
+        Assert.Equal(10, Load("""{ "display": { "finishSoundVolume": -5 } }""").Display.FinishSoundVolume);
+        Assert.Equal(10, Load("""{ "display": { "finishSoundVolume": 0 } }""").Display.FinishSoundVolume);
+        Assert.Equal(50, Load("""{ "display": { "finishSoundVolume": 50 } }""").Display.FinishSoundVolume);
+    }
+
+    [Fact]
+    public void DisplayApprovalSoundIsOffUntilTurnedOn()
+    {
+        Assert.False(Load("{}").Display.ApprovalSound);
+        Assert.True(Load("""{ "display": { "approvalSound": true } }""").Display.ApprovalSound);
+    }
+
+    [Theory]
+    [InlineData("false")]
+    [InlineData("null")]
+    [InlineData("1")]
+    [InlineData("\"true\"")]
+    [InlineData("[true]")]
+    [InlineData("""{"enabled":true}""")]
+    public void SavingAnInvalidApprovalSoundKeepsItOffAndPreservesOtherSettings(string value)
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"phonebox-cfg-{Guid.NewGuid():N}.json");
+        try
+        {
+            var store = new ConfigStore(path);
+            Assert.Null(store.Save($$"""{ "display": { "approvalSound": {{value}}, "finishSoundVolume": 41 } }"""));
+            var display = store.Get().Display;
+            Assert.False(display.ApprovalSound);
+            Assert.Equal(41, display.FinishSoundVolume);
+        }
+        finally { File.Delete(path); }
     }
 
     [Fact]
@@ -283,9 +388,40 @@ public class ConfigTests
         var ws = c.Pages.Single().Widgets!;
         Assert.Equal(3, ws.Count);                                      // the unknown widget is dropped
         var clock = ws[0];
-        Assert.True(clock.X + clock.W <= 12 && clock.Y + clock.H <= 6);
+        Assert.True(clock.X + clock.W <= Catalog.Cols && clock.Y + clock.H <= Catalog.MaxRows);
+        Assert.Equal(9, clock.H); // taller than a phone page, still inside the tablet maximum
         Assert.Equal(0, ws[1].X);
         Assert.Equal(["clock", "n", "n-2"], ws.Select(w => w.Id));
+    }
+
+    [Fact]
+    public void WidgetsOnLaterRowsStayThereUntilTheMaximum()
+    {
+        var c = Load("""
+        { "pages": [ { "id": "p", "title": "P", "widgets": [
+            { "type": "clock", "x": 0, "y": 6, "w": 6, "h": 2 },
+            { "type": "note", "x": 0, "y": 40, "w": 2, "h": 30 } ] } ] }
+        """);
+        var ws = c.Pages.Single().Widgets!;
+        Assert.Equal(6, ws[0].Y); // below a phone's 6 rows: kept for a tablet
+        Assert.Equal(2, ws[0].H);
+        Assert.Equal(Catalog.MaxRows, ws[1].H);
+        Assert.True(ws[1].Y + ws[1].H <= Catalog.MaxRows);
+    }
+
+    [Fact]
+    public void MoreRowsOnATabletIsOffByDefaultAndKeptWhenOn()
+    {
+        Assert.False(Load("{}").Display.TabletRows);
+        Assert.True(Load("""{ "display": { "tabletRows": true } }""").Display.TabletRows);
+        // the default files are embedded in the agent, not copied next to the tests
+        foreach (var name in new[] { "config.default.json", "config.default.linux.json", "config.default.macos.json" })
+        {
+            using var stream = typeof(AgentConfig).Assembly.GetManifestResourceStream(name);
+            Assert.NotNull(stream);
+            using var doc = System.Text.Json.JsonDocument.Parse(stream, new() { CommentHandling = System.Text.Json.JsonCommentHandling.Skip, AllowTrailingCommas = true });
+            Assert.Equal(System.Text.Json.JsonValueKind.False, doc.RootElement.GetProperty("display").GetProperty("tabletRows").ValueKind);
+        }
     }
 
     [Fact]
@@ -330,6 +466,19 @@ public class ConfigTests
         Assert.Equal(["away", "away-2"], c.Rules.Select(r => r.Id));
         Assert.Equal(1440, c.Rules[0].Value);
         Assert.Equal("info", c.Rules[0].Level);
+    }
+
+    [Theory]
+    [InlineData("""{"display":{"standby":"power"}}""", false, "off")]
+    [InlineData("""{"deviceSerial":"FAKE1","display":{"standby":"power"}}""", false, "off")]
+    [InlineData("""{"deviceSerial":"FAKE1","display":{"standby":"power"}}""", true, "power")]
+    [InlineData("""{"deviceSerial":"FAKE1","ignoredDeviceSerials":["FAKE1"],"display":{"standby":"power"}}""", true, "off")]
+    public void StandbyReachesOnlyTheSelectedUsbPhone(string json, bool selected, string expected)
+    {
+        var c = Load(json);
+        var display = JsonSerializer.SerializeToElement(c.ToPublic(standbyForPhone: selected), ConfigStore.WriteOpts).GetProperty("display");
+        Assert.Equal(expected, display.GetProperty("standby").GetString());
+        Assert.Equal("power", c.Display.Standby); // the saved value is unchanged
     }
 }
 
@@ -461,6 +610,31 @@ public class ConfigConcurrencyTests
             Assert.Equal(ConfigStore.Conflict, s.Save(tabA, loadedByTabA));           // tab A, stale
             Assert.Equal("01:11", s.Get().Night.Start);
             Assert.Equal(0.02, s.Get().Night.Brightness);
+        }
+        finally { File.Delete(path); File.Delete(path + ".bak"); }
+    }
+
+    [Fact]
+    public void EveryWriteMovesTheVersionForward()
+    {
+        // The version is the file's write time, which Windows keeps in coarse steps: two quick writes could share one
+        // version, and a stale save got through. A write time ahead of the clock stands in for "the same step" here, on
+        // any machine: a write must still move the version past it.
+        var (s, path) = NewStore();
+        try
+        {
+            var ahead = DateTime.UtcNow.AddMinutes(5);
+            File.SetLastWriteTimeUtc(path, ahead);
+            var loaded = s.Version;
+            Assert.Null(s.Save(With(s, c => c.Night.Start = "01:11"), loaded));
+            Assert.True(s.Version > loaded);
+            Assert.Equal(ConfigStore.Conflict, s.Save(With(s, c => c.Night.End = "06:06"), loaded)); // the stale one
+
+            File.SetLastWriteTimeUtc(path, ahead);
+            loaded = s.Version;
+            s.Touch();
+            Assert.True(s.Version > loaded);
+            Assert.True(s.VersionConflict(loaded.ToString()));
         }
         finally { File.Delete(path); File.Delete(path + ".bak"); }
     }
@@ -640,6 +814,7 @@ public class PageBarConfigTests
     [InlineData("{}", "dots", "bottom")]
     [InlineData("""{"display":{"pageBar":"bar","pageBarSide":"left"}}""", "bar", "left")]
     [InlineData("""{"display":{"pageBar":"auto","pageBarSide":"right"}}""", "auto", "right")]
+    [InlineData("""{"display":{"pageBar":"hidden"}}""", "hidden", "bottom")]
     [InlineData("""{"display":{"pageBar":"sideways","pageBarSide":"top"}}""", "dots", "bottom")]
     [InlineData("""{"display":{"pageBar":null,"pageBarSide":null}}""", "dots", "bottom")]
     public void APageBarSettingThePanelDoesNotKnowIsSavedAsTheDefault(string inputJson, string bar, string side)

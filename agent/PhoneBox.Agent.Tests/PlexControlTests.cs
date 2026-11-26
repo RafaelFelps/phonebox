@@ -311,12 +311,12 @@ public sealed class PlexControlTests
         using var fixture = new Fixture();
         using var plex = fixture.Create();
         await Task.WhenAll(Enumerable.Range(0, 8).Select(_ => plex.Snapshot(default)));
-        Assert.Single(fixture.ToPlayer.Where(c => c.Uri.AbsolutePath == "/player/timeline/poll"));
+        Assert.Single(fixture.ToPlayer, c => c.Uri.AbsolutePath == "/player/timeline/poll");
         fixture.Clock += 4_000; await plex.Snapshot(default);
-        Assert.Single(fixture.ToPlayer.Where(c => c.Uri.AbsolutePath == "/player/timeline/poll"));
+        Assert.Single(fixture.ToPlayer, c => c.Uri.AbsolutePath == "/player/timeline/poll");
         fixture.Clock += 2_000; await plex.Snapshot(default);
         Assert.Equal(2, fixture.ToPlayer.Count(c => c.Uri.AbsolutePath == "/player/timeline/poll"));
-        Assert.Single(fixture.ToServer.Where(c => c.Uri.AbsolutePath == "/identity")); // cached per server address
+        Assert.Single(fixture.ToServer, c => c.Uri.AbsolutePath == "/identity"); // cached per server address
     }
 
     [Fact]
@@ -893,7 +893,7 @@ public sealed class PlexControlTests
             () => 1_000_000, null, null, null, null, plex);
         var result = await deck.Act("action", "pl1", null, null, null, null, default);
         Assert.True(result.Ok, result.Error);
-        Assert.Single(fixture.ToPlayer.Where(c => c.Uri.AbsolutePath == "/player/playback/playMedia"));
+        Assert.Single(fixture.ToPlayer, c => c.Uri.AbsolutePath == "/player/playback/playMedia");
     }
 
     [Fact]
@@ -1057,8 +1057,11 @@ public sealed class PlexControlTests
             ServeLocal(player, stop.Token, c => Reply(c, TimelineXml(), "text/xml"));
             ServeLocal(server, stop.Token, c => StallLocal(c, stop.Token, "application/json"));
             using var fixture = new Fixture(Url(server), extra: $",\"plexPlayerUrl\":\"{Url(player)}\"");
-            using var plex = Real(fixture, TimeSpan.FromMilliseconds(300));
-            var snap = await plex.Snapshot(default).WaitAsync(TimeSpan.FromSeconds(5));
+            // the player answers at once, but a busy CI runner can take longer than 300 ms to get that answer to the
+            // agent, which then reports the player missing instead of the server stalling: a budget the stall still
+            // exceeds by far, while the player's answer fits in it
+            using var plex = Real(fixture, TimeSpan.FromMilliseconds(1500));
+            var snap = await plex.Snapshot(default).WaitAsync(TimeSpan.FromSeconds(10));
             Assert.Equal("The Plex server is unavailable", snap["error"]!.GetValue<string>());
         }
         finally { stop.Cancel(); player.Close(); server.Close(); }

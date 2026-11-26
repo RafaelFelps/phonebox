@@ -259,6 +259,7 @@ offer_extras() {
 # ---- agent ------------------------------------------------------------------------------------------------------
 unit="$HOME/.config/systemd/user/phonebox.service"   # where scripts/uninstall.sh looks
 plist="$HOME/Library/LaunchAgents/net.oxog.phonebox.agent.plist"
+app_login_plist="$HOME/Library/LaunchAgents/net.oxog.phonebox.app.plist"   # written by the menu bar item in PhoneBox.app
 
 systemd_user() { have systemctl && systemctl --user show-environment >/dev/null 2>&1; }
 
@@ -271,6 +272,11 @@ remove_autostart() {
   if [ "$os" = osx ] && [ -f "$plist" ]; then
     rm -f "$plist"
     info 'Removed the login item; PhoneBox no longer starts at login.'
+  fi
+  # PhoneBox.app's own "Start at Login" (menu bar): without autostart it must not start PhoneBox at login either
+  if [ "$os" = osx ] && [ -f "$app_login_plist" ]; then
+    rm -f "$app_login_plist"
+    info 'Removed the app'"'"'s "Start at Login"; PhoneBox no longer starts at login.'
   fi
 }
 
@@ -334,6 +340,7 @@ EOF
     ok "systemd user service: $unit"
   else
     mkdir -p "$(dirname "$plist")"
+    rm -f "$app_login_plist"   # PhoneBox.app's "Start at Login": this agent replaces it, two would start two instances
     cat > "$plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -376,11 +383,33 @@ linux_usb_help() {
   caution '  Guide: https://developer.android.com/studio/run/device#setting-up'
 }
 
+read_usb_install_policy() {
+  local config
+  "$app/PhoneBoxAgent" --print-install-dir --write-ignored-usb "$1" >/dev/null 2>&1 || return 1
+  [ -f "$1" ] && return 0
+  # Legacy agents cannot validate an existing configuration.
+  if [ "$os" = osx ]; then config="$HOME/Library/Application Support/PhoneBox/config.json"
+  else config="${XDG_CONFIG_HOME:-$HOME/.config}/PhoneBox/config.json"; fi
+  if [ -e "$config" ] || [ -L "$config" ]; then return 1; fi
+  : > "$1"
+}
+
 select_phone() { # prints the serial of the one authorised phone, or nothing to skip
-  local wanted="$serial" devices ready count answer
+  local ignore_list="$1" wanted="$serial" devices available ready count answer
   "$adb" start-server >/dev/null 2>&1 || true
   while :; do
+    if [ -n "$wanted" ] && grep -Fxq -- "$wanted" "$ignore_list"; then
+      caution "$wanted is in PhoneBox's ignored USB device list. Skipping the phone app." >&2
+      return 0
+    fi
     devices="$("$adb" devices 2>/dev/null | awk -F'\t' 'NF >= 2 { print $1 "\t" $2 }')"
+    available="$(printf '%s\n' "$devices" | awk -F'\t' 'FILENAME == ARGV[1] { ignored[$0] = 1; next }
+      NF >= 2 && !($1 in ignored)' "$ignore_list" -)"
+    if [ -n "$devices" ] && [ -z "$available" ]; then
+      caution 'All attached devices are ignored. Skipping the phone app.' >&2
+      return 0
+    fi
+    devices="$available"
     if [ -n "$wanted" ]; then devices="$(printf '%s\n' "$devices" | awk -F'\t' -v s="$wanted" '$1 == s')"; fi
     # only phones on a cable are picked automatically, not emulators or wireless-debugging connections
     ready="$(printf '%s\n' "$devices" | awk -F'\t' -v w="$wanted" '$2 == "device" && (w != "" || $1 !~ /^emulator-|:|\._tcp/) { print $1 }')"
@@ -599,7 +628,9 @@ main() {
     elif ask 'Install the PhoneBox app on a phone connected over USB now?' y; then
       info 'USB debugging lets an allowed computer control the phone. Allow only your own computers; you can'
       info 'revoke them under Developer options > "Revoke USB debugging authorisations".'
-      device="$(select_phone)"
+      local ignore_list="$tmp/ignored-usb-devices"
+      if read_usb_install_policy "$ignore_list"; then device="$(select_phone "$ignore_list")"
+      else caution 'Phone app skipped: this agent could not read the USB ignore settings.'; device=""; fi
       if [ -n "$device" ]; then
         apk="$tmp/PhoneBox-$ver.apk"
         if ! download "$base/PhoneBox-$ver.apk" "$apk"; then
